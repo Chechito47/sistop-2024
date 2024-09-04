@@ -97,6 +97,7 @@ Una computadora tiene muchísimas interrupciones aunque no este haciendo nada, p
 Las interrupciones en cierta medida están limitadas por la velocidad de las demás partes de la computadora, por ejemplo de la velocidad del disco, de la velocidad a la que usemos el touchpad, de la velocidad la que tecleamos, etc.
 ### Relación entre el SO, kernel y el programa
 Veamos un poco como es que se relacionan el sistema operativo(kernel), el hardware y el programa. Para ello analicemos el siguiente diagrama:
+
 ![ScreenShot](Imagenes/relacion_kernel_usuario_programa.png)
 - Primero el sistema operativo inicializa la **tabla de trap** *(en donde están todos los números de direcciones de memoria)*
 - El hardware recuerda las direcciones necesarias *(le decimos el nro de la base de la trap table)*
@@ -165,7 +166,10 @@ Hablemos un poco mas en detalle de cada una:
 #### FIFO (first in first out)
 Es una politica basada en que quien llega primero se ejecuta primero. Es sencilla de implementar
 Algunos ejemplos de diagramas de tiempo para FIFO son:
-![ScreenShot](Imagenes/FIFO_1.png)![ScreenShot](Imagenes/FIFO_2.png)
+
+![ScreenShot](Imagenes/FIFO_1.png)
+![ScreenShot](Imagenes/FIFO_2.png)
+
 Entonces vemos procesos que se enumeran (en este caso por letras) ya que llegaron al mismo tiempo, vemos como se multiplexan por tiempo
 Es de tipo por lote(Batch), primero todo A, luego todo B y luego todo C. Ademas como rápidamente permite pasar entre procesos es interactivo.
 Es justa porque atiende a todos los procesos ya que no voy a ejecutar procesos infinitos
@@ -176,7 +180,9 @@ El problema del round robin es que cuando ocurre una syscall perdemos mucho rend
 Por lo tanto depende mucho del **quanto**, uno muy pequeño daría lugar a que atendemos rápido y soltamos pero vamos a tener que hacer muchos cambios de contexto los cuales no son gratis. Si es uno muy grande estaríamos dedicándole tiempo extra a procesos que no lo necesitan.
 Si aprieto una tecla despierto al proceso shell y este proceso no se va a ejecutar hasta que le toque el turno ni se va a adelantar. Por lo que por ejemplo si tengo muchos procesos voy a notar que al escribir va a tardar en mostrarse los caracteres en pantalla.
 En cierta forma es similar a la FIFO, pero con la diferencia del quanto. Veamos las siguientes imágenes:
+
 ![ScreenShot](Imagenes/FIFO_RR.png)
+
 En esta vemos que un FIFO se puede transformar en un RR haciendo uso del quanto, en este caso el quanto es de 1. En el primer gráfico A es quien sale beneficiado, B depende de lo que haga y C sale perjudicado, ya que el tiempo para que se ejecute A es 5, para B es 10 y para C es 15
 Pero a su vez por la gran cantidad de cambios de contexto que se dan en el segundo gráfico, el tiempo real va a ser distinto entonces podemos decir que el gráfico es incorrecto porque debería tardar un poquito mas
 Es justa porque atiende a todos
@@ -185,13 +191,17 @@ Se suele usar para computadoras de escritorio o celulares debido a que necesito 
 Elijo al proceso mas corto y lo ejecuto por lotes. No es apropiativa.
 Necesito tener el tiempo de los procesos.
 No es justa porque al ejecutar al mas corto primero puede darse la situación que un proceso largo nunca se llegue a ejecutar debido a infinitos procesos cortos que llegan y se ejecutan primero.
+
 ![ScreenShot](Imagenes/SJF_1.png)
+
 En este gráfico vemos como A se esta ejecutando y llegan B y C
 #### STCF (shortest time to completion first)
 Primero van los que tengan menor tiempo en completarse el trabajo, es distinto a SJF ya que ahora compara por tiempo que restante no tiempo total.
 Es interactiva.
 Lo que pasaría con la figura del SJF si fuera STCF es lo siguiente:
+
 ![ScreenShot](Imagenes/STCF.png)
+
 El A estaba ejecutándose y llegan B y C. Hay un context switch porque llegaron B y C entonces sea cual sea la forma por la que llegaron hubo un context switch o sea una interrupción.
 Entonces como B y C le restan menos tiempo para terminar su ejecución los ejecuta primero y luego sigue con A.
 Esta decisión se va tomando momento a momento.
@@ -205,6 +215,7 @@ Es mas complejo por eso esta detallado mas abajo
 Es el que usa linux
 #### Uso de recursos
 Entonces el gran truco de las computadoras es hacer un optimo uso de los recursos que dispongo
+
 ![ScreenShot](Imagenes/uso_de_recursos.png)
 - El primer diagrama es un I/O-bound, un tipo de proceso limitado por entrada/salida
 - El otro diagrama es un CPU-bound, un tipo de proceso limitado por CPU
@@ -217,7 +228,9 @@ Entonces aprovechando el sistema de cambio de contexto se logra encajar pedacito
 ---
 ## **Impacto de las syscall**
 Veamos el siguiente diagrama:
+
 ![ScreenShot](Imagenes/syscall_impact.png)
+
 *IPC es Instrucciones por ciclo*
 Sabemos que por cada ciclo de reloj se ejecuta una instrucción, o sea que el  **Instruction per cicle = 1**. Ahora los procesadores son superescalares, pueden ejecutar mas de una ejecución por ciclo.
 El gráfico muestra cual es el IPC de la instrucciones cuando ocurre en medio de una syscall. Venia ejecutando 1.5 instrucciones por ciclo (promedio) y de golpe llega la syscall y ejecuto muchísimo menos y a medida que pasa el tiempo vuelvo a retomar el ritmo a los 16000 ciclos vuelvo al mismo ritmo que tenia antes. *Es como si estuviera haciendo algo, me desconcentro y vuelvo a concentrarme al cabo de unos segundos.*
@@ -231,7 +244,9 @@ Es hacer algo mientras estamos esperando una entrada.
 La idea es una cosa que se adapte automáticamente entre los procesos que toman muy poco tiempo y devuelven rápidamente el control y los procesos que son pesados en computo y por lo tanto CPU-bound.
 Por lo tanto vemos que intenta ser todos los otros tipos de planificadores a la vez.
 **En lugar de tener una cola donde se hace el RR vamos a tener muchas colas donde se hace:**
+
 ![ScreenShot](Imagenes/MLFQ_Example.png)
+
 Las primeras colas son de alta prioridad mientras que las ultimas son de baja prioridad. **Las de alta prioridad tienen que quanto muy pequeño y las de baja prioridad tienen el quanto grande**. *(La cola ordena procesos listos para correr, o sea procesos ready)*
 Lo que se trata de hacer es poner los procesos I/O-bound como alta prioridad y los CPU-bound como baja prioridad. Pero hay un problema, sabemos que no es posible a ciencia cierta calcular exactamente cuanto va tardar un proceso en ejecutarse. Ademas tampoco puedo saber si un proceso va a ser CPU-bound o I/O-bound, o si va a cambiar durante el tiempo. 
 Entonces la idea es hacer un proceso adaptivo que todo el tiempo este evaluando si tiene que bajar o subir de prioridad
@@ -271,7 +286,9 @@ Es imposible que un proceso pueda ver la memoria de otro ya que todos los proces
 Stack es donde se ponen los argumentos de función y la dirección de retorno de los argumentos de función. Si tenemos un programa recursion el stack crece mucho
 Heap es donde se hacen los malloc y free. Si tenemos un programa que pide mucha memoria crece mucho el heap.
 El stack crece para abajo y el heap para arriba enfrentados de forma tal que si no utilizamos mucho uno el otro si se pueda usar mucho. La suma de los espacios esta fija.
+
 ![ScreenShot](Imagenes/heap_and_stack.jpg)
+
 Lo único que no se comparte es el stack. También hay un mecanismo de protección para que no se toquen el stack y el heap
 High address es el punto de quiebre de la memoria.
 Text es el programa.
