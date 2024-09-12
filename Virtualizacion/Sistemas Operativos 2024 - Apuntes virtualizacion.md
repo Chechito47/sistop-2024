@@ -9,6 +9,12 @@ El reset es una interrupción por tiempo que se produce de vez en cuando, funcio
 ### Sitios webs
 En los sitios webs puedo poner parámetros en la url para hacer cosas malas, se hace con
 ?a=10&b=11 por ejemplo o oculto=10 y así. Con esto podes obtener información para que esto no pase deben estar protegidos los sitios webs.
+### Close - como funciona
+Con close(STDOUT_FILENO) cierra el file descriptor, luego el open busca el primer file descriptor libre lo va a ocupar. Entonces como se cerré el STDOUT es el primero libre y por lo tanto se hace ahí.
+### Variables de entorno
+Las variables de entorno asocian llaves a valores, por ejemplo cual es el log name y devuelve el nombre de usuario del login.
+### Poling
+Poling es preguntar a cada rato si los I/O ya están listos.
 
 ---
 
@@ -294,3 +300,6 @@ High address es el punto de quiebre de la memoria.
 Text es el programa.
 *Si el stack creciera indefinidamente podría tocar el programa, por eso es que la memoria inicilizada y el text no lo puedo tocar y esta protegida, así no puedo hacer moco.*
 Todo lo que ocupe la memoria del kernel no se puede leer, escribir, acceder ni ejecutar
+
+---
+

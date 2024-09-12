@@ -66,4 +66,6 @@ El unico que tengo que implementar es el help que es un printf
 Usemos la librería string si hace falta
 Static es porque es privada, no se ve en el .h pero si en el .c
 
-
+---
+## Parcialito
+Como se hace una syscall, que archivos hay que tocar para hacer una syscall
