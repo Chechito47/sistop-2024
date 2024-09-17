@@ -15,6 +15,15 @@ Con close(STDOUT_FILENO) cierra el file descriptor, luego el open busca el prime
 Las variables de entorno asocian llaves a valores, por ejemplo cual es el log name y devuelve el nombre de usuario del login.
 ### Poling
 Poling es preguntar a cada rato si los I/O ya están listos.
+### Scheduler
+Cada nucleo del procesador tiene un scheduler
+### Mostrar traza de todos los accesos a memoria
+`valgrind --tool=lackey --trace-mem=yes ./a.out`
+Me muestra todos los accesos a memoria que hace el programa cuando ejecuta en la memoria
+- **I**: es un acceso a memoria de instrucción
+- **L**: hizo una carga de la memoria
+- **S**: escribió en la memoria
+Primero muestra la dirección y luego la cantidad de bytes
 
 ---
 
@@ -85,6 +94,11 @@ Strdup retorna un puntero a un nuevo string que es el duplicado del string que e
 ---
 ## Execvp
 execvp, esta pensado para funcionar con fork. Agarra el primero de los argumentos que es una cadena de caracteres y busca ese programa dentro del sistema de archivos, lo carga en memoria con los argumentos y empieza a ejecutar ese programa desde cero, o sea desde main. Entonces lo que pasa es que la memoria de todo el programa que estaba ejecutando desaparece porque se reemplaza por otro, se pisa. Entonces podemos decir que fork es copiar otro y execvp lo pisa. El execpv lo que hace es cambiar todo el mapa de memoria, entonces el hijo no muere si no que se transforma. Entonces con esta función o comando no debemos chequear errores ya que si hay algún error la función se transforma. Por ejemplo podemos hacer que de un error pasandole como argumento un comando no valido.
+Por ejemplo cada vez que hago gcc de un programa creo un proceso hijo del gcc, lo que hago es un execvp de gcc y el padre que es el shell le esta pasando información al hijo. Por lo tanto hay traspaso de información del padre al hijo mediante los parámetros que le siguen al programa.c. Puedo saber que el padre me comunica algo porque me devuelve un código de error que lo puedo saber si hago:
+`echo $?`
+**Por lo tanto el padre comunica al hijo mediante los parámetros y el hijo comunica al padre mediante los códigos de error** *(el código de retorno de la función main, por ejemplo si es 0 esta todo bien).*
+### IPC (inter process comunication)
+El mecanismo básico de creación de procesos involucra comunicarle parámetros básicos de entrada al proceso y cuando ese proceso hijo termina le muestra el resultado al padre.
 
 ---
 ## User space y kernel space
@@ -217,8 +231,30 @@ También es starvation porque si llegan infinitos procesos muy rápidos de ejecu
 Ejecuta lo que estaba en ejecución
 #### MLFQ
 Es mas complejo por eso esta detallado mas abajo
-#### CFS
-Es el que usa linux
+#### CFS (Completely fair scheduler)
+Es el que usa linux. Esta muy optimizado provocando que las decisiones de scheduler que se tomen sean muy rapidas y ligeras a pesar de que haya muchas y sean agresivas (por ejemplo un estudio de los datacenter de google mostro que no sobrepasa el 5% de uso del CPU)
+
+![ScreenShot](Imagenes/CFS_example.png)
+
+##### Virtual runtime
+El objetivo de CFS es claro, dividir justamente el CPU entre los distintos procesos. Para ello hace uso de una técnica llamada **virtual runtime (vruntime)**. Cada proceso que corre acumula vruntime, en la mayoría de los casos aumenta de forma proporcional con el tiempo real. Luego cuando una decisión de scheduler ocurre CFS elige al proceso con menor vruntime para que sea el siguiente en correr.
+Notemos que si CFS hace muchos switches aumenta la respuesta de la computadora (fairness) pero baja el rendimiento. Si no hay muchos switches aumenta el rendimiento.
+##### Parámetros de control
+Ahora, como hace CFS para saber o aproximar cuanto tiempo corre un programa. Para ello hace uso de varios parámetros de control:
+##### sched_latency
+Se usa para determinar cuanto tiempo debe correr un programa antes de hacer un switch. El típico valor es de 48ms. CFS divide este valor entre la cantidad de procesos corriendo en el CPU para determinar cuando se debe cambiar(time slice). *Por ejemplo si hay 4 proceso corriendo, el tiempo para cambiar seria de 12ms. CFS corre el primer proceso por 12ms y se fija si hay otro con menor vruntime y como en este caso si hay selecciona uno de los 3 disponibles y así sucesivamente*. **En la figura anterior se muestra este ejemplo.**
+##### min_granularity
+¿Que pasaria si hay muchisimos procesos corriendo? Para evitar que los procesos corran muy poco tiempo existe el *min_granularity* que usualmente es de 6ms el cual es el tiempo mínimo que los procesos correrán antes volver a block. *Por ejemplo si hay 10 procesos corriendo, el sched_latency seria de 4.8ms pero debido al mun_granularity van a correr minimamente 6ms*
+##### Niceness
+CFS tambien permite controlar la prioridad para los procesos mediante un nivel conocido como **nice** que puede ir de -20 hasta 19 siendo 0 el valor por defecto. Mientras mas alto sea el nivel, o sea mas nice seas menor prioridad vas a tener y mientras mas bajo mayor prioridad. Entonces la formula para calcular el time slice es
+
+![ScreenShot](Imagenes/time_slice_formula.png)
+
+##### Red black trees
+Como dijimos anteriormente el foco de CFS es su eficiencia pero ¿Como hace para eligir el próximo proceso que correrá de manera rápida?. Para ello mantiene los procesos en un **red-black tree** *(es un tipo de árbol balanceado, los cuales mantienen mas información que los arboles binarios y se aseguran que las operaciones sean algotirmicas y no lineales en tiempo)*. CFS no mantiene todos los procesos en el árbol, si no que solo los procesos que están en running o ready se mantienen ahí. Por ejemplo si un proceso necesita de un I/O se va a block y sale del árbol.
+Notar que los procesos en el árbol se orden según su vruntime de izquierda a derecha (es un poco rara).
+##### I/O
+Notar que también hay un problema con los procesos I/O ya que al irse a block pierden vruntime haciendo que si este proceso hubiera empezado a correr con otro proceso haga que se cuando vuelva a running se deje de atender al otro proceso porque el proceso que volvió tiene menor vruntime. Para solucionar esto CFS hace que un proceso que vuelve a running tenga el mínimo valor de vruntime que se encuentre en ese momento en el tree.
 #### Uso de recursos
 Entonces el gran truco de las computadoras es hacer un optimo uso de los recursos que dispongo
 
@@ -243,10 +279,10 @@ El gráfico muestra cual es el IPC de la instrucciones cuando ocurre en medio de
 Entonces vemos que el **problema del round robin** es que cuando hay una **syscall perdemos rendimiento**
 
 ---
-## **MLFQ**
+## **MLFQ (Multi level feedback queue)**
 ### Superposicion de computo
 Es hacer algo mientras estamos esperando una entrada.
-### ¿¿¿ CTSS (compatible time sharing system) ???
+### Idea del MLFQ
 La idea es una cosa que se adapte automáticamente entre los procesos que toman muy poco tiempo y devuelven rápidamente el control y los procesos que son pesados en computo y por lo tanto CPU-bound.
 Por lo tanto vemos que intenta ser todos los otros tipos de planificadores a la vez.
 **En lugar de tener una cola donde se hace el RR vamos a tener muchas colas donde se hace:**
@@ -295,11 +331,165 @@ El stack crece para abajo y el heap para arriba enfrentados de forma tal que si 
 
 ![ScreenShot](Imagenes/heap_and_stack.jpg)
 
-Lo único que no se comparte es el stack. También hay un mecanismo de protección para que no se toquen el stack y el heap
+Lo único que no se comparte es el stack. También hay un mecanismo de protección para que no se toquen el stack y el heap.
 High address es el punto de quiebre de la memoria.
 Text es el programa.
+En el stack tengo que acordarme a que punto volver, o sea la dirección de retorno.
 *Si el stack creciera indefinidamente podría tocar el programa, por eso es que la memoria inicilizada y el text no lo puedo tocar y esta protegida, así no puedo hacer moco.*
 Todo lo que ocupe la memoria del kernel no se puede leer, escribir, acceder ni ejecutar
+**Ambos son dinámicos.**
+**En el heap se guarda la memoria que pido con malloc mientras que en el stack se guardan los argumentos de función y las direcciones de retorno.**
+### Desbordamiento de buffer
+Si el stack creciera tanto que termina pisando al heap y al código del programa se produce un error conocido como desbordamiento de buffer, es una vulneracion al SO que realizan programas maliciosos o mal hechos haciendo crecer al stack de forma artificial a través de parámetros muy largos hasta pise el código del programa con datos que yo quiero para obtener el control del programa que se esta ejecutando a través de parámetros de entrada.
+Para evitar esto es que se pone el stack arriba y el heap abajo, se le deja al stack un espacio pequeño y entre el final del espacio libre del stack y el inicio del código de programa se pone un **bollero**(alambre), cuando el stack intenta pasar ese bollero el código es terminado para protegerse y se liberan los recursos del programa.
+### Sistema operativo
+Es importante entender que todos los elementos que declaro en un programa tienen que estar en algún lado. Ademas el sistema operativo también debe estar en la memoria ya que necesito llamarlo. *Aunque ahora esta bastante oculto pero en cierta parte podemos decir que forma parte de la memoria.* **Ahí es donde se ejecutan todas las syscalls y se ejecutan todos los traps ya sean por hardware o software.**
 
 ---
 
+## Virtualizacion de la RAM
+Virtualizar la RAM es un proceso mediante el cual hacemos creer a los programas que disponen de toda la memoria fisica disponible para ellos solos. Se hace mediante distintas tecnicas con ayuda tanto del software como del hardware multiplexando. Es importantisimo poder virtualizar la memoria no solo por la efeciencia sino por la seguridad.
+## Objetivos
+1. ***Transparencia***: queremos que el SO implemente la memoria virtual de una manera la cual sea invisible para otros programas de manera tal que estos no sepan que su memoria es virtualizada y crean que disponen de toda la memoria física
+2. ***Eficiencia***: Hacer que todos los procesos crean que tienen toda la RAM impone una carga por lo que el SO debe hacer la virtualizacion lo mas eficientemente posible tanto en tiempo (que la virtualizacion no ralentice los programas) como en espacio (que las estructuras necesarias para virtualizar no necesiten mucha memoria). Para lograr esta eficiencia el SO se debe apoyar del hardware por características como TLBs.
+3. ***Protección***: El SO debe proteger un proceso de otro de manera tal que entre ellos no puedan ver, acceder o modificar lo que tienen entre si, solo pueden hacerlo ellos mismos generando la sensación de que cada proceso esta aislado. No tengo que poder a través de los mecanismo de leer y escribir memoria poder tocar el kernel, leer el kernel, corromper el código ya sea a través del stack o el heap. Estos mecanismo de protección me los debe brindar la abstracción conocida como el espacio de dirección.
+
+### Administrar memoria
+Veamos un ejemplo de que pasa con la memoria. Supongamos que tenemos el siguiente código:
+`int *p = malloc(1* sizeof(*p));`
+Este pide memoria al heap mediante malloc *(recordemos que malloc devuelve un puntero)*, luego int hace que este puntero se guarde en el stack. Pero ademas como el programa esta hecho en código, el código del programa se guarda en program code
+### Variables automáticas
+Todas las variables que declaro sin necesidad de pedir memoria son de tipo automática, estas no las tengo que liberar manualmente. Por ejemplo un int, un string, un int *p*, y demás.
+Se usa el tipo de estructura **pila** en la que las variables nuevas van por encima de las viejas.
+*Por ejemplo si no declaramos argc como parametro de la funcion pero si como una variable esta va a ser distinta.*
+**El SO siempre pone en el stack que define por defecto el argc y el argv aunque no los use o los declare.**
+### Pedir memoria
+Puedo pedir memoria de manera manual. Para ello puedo utilizar malloc el cual necesita que le pasemos el tamaño que queremos como argumento. Luego de pedir la memoria y utilizarla necesito liberar la memoria, aunque puede que en algunos casos no sea estrictamente necesario hacerlo es una buena practica, lo hago usando free(p) sin ponerle la estrellita ya que estrellita es el valor que se almacena en la memoria, yo lo tengo que decir es liberarme el puntero que apunta a esa dirección de memoria.
+### Scopping - Ámbito de vida la de variable
+Puedo utilizar las llevas para declarar ahí dentro variables que solo funcionaran ahí dentro. Por ejemplo siguiendo el ejemplo anterior podría hacer:
+`#include <stdlib.h>`
+`int main(int argc, char ** argv) {`
+`int *p = malloc(1*sizeof((*p));`
+`{`
+`int *p = NULL;`
+`int j = 0;`
+`}`
+`j = 1;`
+`free(p);`
+`}`
+De esta manera estrellita p vale NULL solo dentro de las llaves al igual que j=0 solo dentro de la llave, una vez que se cierra j no existe mas y por lo tanto j=1 va a dar error.
+*Notar también que podríamos seguir haciendo eso, crear mas variables dentro de llaves que a su vez están dentro de llaves. Entonces estaríamos creando variables que luego se van destruyendo a medida que salen.*
+**A medida que voy creando cosas dentro de la llave estas se van creando arriba de la pila.** Creo el primer p en la pila, luego el que esta dentro de la llave lo crea arriba de ese, el que sigue arriba, el que le sigue arriba y así... Luego hago pop y bajo del stack.
+### Mostrar valor de un registro del stack
+Podríamos mostrar el valor de un registro del stack que no conocemos de manera simple:
+`#include <stdlib.h>`
+`#include <stdio.h>`
+`int main() {`
+`int a;`
+`int *q = &a;`
+`printf("%d\n", *(q+2));`
+`return 0;`
+`}`
+De esta imprimimos el valor de q+2 el cual es desconocido para nosotros.
+#### Stack smash
+Sabemos que el argc esta en el stack pero no sabemos exactamente donde esta, por ende podríamos recorrerlo para tratar de encontrarlo. A priori sabemos que si tenemos un programa que no toma parámetros su valor debe ser 1
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	int a;
+	int *q = &a;
+	for (int i=0; i<16; i++)
+		printf("%d\n", *(q+i));
+	
+	return 0;
+}
+```
+Luego si nos ponemos a agregar parámetros cuando llamamos al programa veremos que uno de los valores aumenta, entonces ese es el argc.
+Ahora para saber en que posición esta modificamos un poco el programa:
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	int a;
+	int *q = &a;
+	for (int i=0; i<16; i++)
+		printf("%d: %d\n", i, *(q+i));
+	
+	return 0;
+}
+```
+Este es el principio de una técnica de seguridad informática llamada stack smash.
+**Es importante entender la memoria del proceso que esta ejecutando como un arreglo lineal de memoria** donde tengo el stack por un lado que crece decrementando las posiciones de memoria, tengo el heap en un lugar que incrementa las direcciones de memoria.
+#### Ver las syscall que hace
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	int *p = malloc(1*sizeof(*p));
+}
+```
+Luego compilo con para que no haga syscalls linkers y demas 
+`gcc -static malloc.c`
+Luego si hago 
+`strace ./a.out`
+Veremos todas las syscalls que hace el programa.
+Vemos que ocurren varias syscalls, entre ellas execvp, brk, arch_protect, uname, readlink, brk, mprotect, exit.
+Pero no vemos explicitamente que pida memoria en ningún momento. Esto es porque **malloc tiene un llamado a una función de librería**. Si ejecutamos sin el -static podremos ver que hace otras cosas un poco raras que son llamadas a la librería.
+#### ltrace
+Es como el strace pero nos muestra las librerías, por ejemplo nos dice que hay una llamada a malloc con 4 bytes y nos muestra el valor de retorno que es una dirección de memoria (el valor del puntero que se almacena en estrellita p).
+Luego si quiero filtrar los resultados solo para ver los llamados que hace a malloc puedo hacer: 
+`ltrace -emalloc pi 100`
+Y eso me muestra solo las lineas que tengan algo relacionado a malloc
+#### Malloc y free
+Malloc y free son llamadas a una rutina, a una ficha. Cuando hago un malloc o free algo se toca en el heap.
+Notar que es una mala practica hacer un malloc pidiendo una cantidad fija de memoria. Por ejemplo:
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	long *p = malloc(1*sizeof(*p));
+	long *q = malloc(4);
+}
+```
+Vemos que esto compila pero eso no significa que sea correcto nuestro código. La primer linea si es correcta ya que pedimos la cantidad de memoria que devuelva la función sizeof la cual devuelve un sizeof_t que va a depender de la arquitectura de nuestra computadora entonces siempre vamos a tener la cantidad de bytes necesaria. *Creo que eran 64bits para los long -> 8bytes.*
+Mientras que en la segunda linea solo pedimos 4bytes y como un long tiene 8bytes nos quedamos cortos.
+#### Mangled y demangle
+Los nombres raros que tienen partes que se entienden y partes que no con muchas letras y nros se llaman mangled y le sirven a la biblioteca de enlace dinámicos, pero a nosotros no nos sirve. Por ejemplo:
+`ZN3cl19cl_free_heap_objectEPNS_7cl_heapE`
+Luego si cuando ejecuto el programa hago
+`ltrace -emalloc pi 100
+Se hace el demangle y me muestra algo que ya puedo entender mejor diciéndome cada una de las llamadas a malloc que hubo.
+#### Valgrind
+Valgrind es emulación pura, sirve para ver la memoria utilizada y fijarse si no hay memleaks. Lo que hace es ir instrucción por instrucción del código de maquina y también todas las llamadas a bibliotecas las va ejecutando en un emulador (emula un procesador) y por eso se hace tan lento.
+#### ASLR
+Si hacemos:
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	int *p = (int *) malloc(1*sizeof(*p));    //o tambien int p* = malloc(4);
+	int *q = (int *) malloc(4);
+}
+```
+Y luego hacemos 
+`ltrace ./a.out`
+Veremos que el salto de la dirección entre los valores va a ser de 32bytes. Esto es debido al **ASLR (Address space layout randomization)** es una técnica que implementa el SO en conjunto con la biblioteca de carga dinámica para tratar que la seguridad del código sea lo mejor posible. Entonces si pedimos 1 solo byte también estaríamos generando ese espacio de 32 bytes, por lo tanto seria un gran desperdicio de bytes *(o sea uso 1 byte y los siguientes 32bytes están vacíos)* Entonces si pido 1byte desperdicio el 96% de la memoria, si pido 4bytes el 87%, si pido 8bytes el 75%.
+Pero ojo, malloc pide 32bytes hasta el malloc(25), luego empieza a pedir mas bytes. Esto es debido a que malloc me permite usar hasta 24 bytes, los otros 8 los reserva para hacer sus cosas. El heap tiene un control muy estricto de lo que se tiene adentro.
+#### free():Invalid pointer
+Tenemos que notar que yo solo puedo hacer un free de la memoria que previamente pedí, no puedo hacer free de algo que no pedí, por ejemplo no podría hacer:
+```
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+	long *p = (long *) malloc(1);
+	free(p-1);
+}
+```
+El heap tiene que recordar todas las direcciones de memoria que dio cuando se hizo el malloc. No puedo hacer free de un puntero que no esta guardado en ningún lado. Nos devuelve un error invalid pointer.
+Notemos que al free no le pasamos cuanta memoria liberamos, sino el puntero del que queremos liberar. Ahora nos podemos preguntar **¿Donde se almacena el tamaño? La respuesta es en los ultimos 8bytes que no podiamos usar del malloc.**
+#### Double free y heap smashing
+Cuando hago free(p) luego debo poner p=NULL. SI no lo hago y luego pongo otro free(p) estaría generando un error de double free.
+Pero hay que tener cuidado porque con el double free podríamos atacar el heap generando un ataque conocido como heap smashing.
+#### Variable no inicializada
+Si declaro una variable pero no la inicializo podría darme error o no ya que tendrá el valor que tenia antes esa variable si es que existía. La memoria nunca esta vacía, tendrá en el caso de que no había nada antes basura.
