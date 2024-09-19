@@ -69,3 +69,82 @@ Static es porque es privada, no se ve en el .h pero si en el .c
 ---
 ## Parcialito
 Como se hace una syscall, que archivos hay que tocar para hacer una syscall
+### Shell
+El shell es una interfaz entre el SO y el usuario ya que permite al usuario acceder a los servicios que provee el SO como ejecutar comandos, redireccionar entradas y salidas, etc. Podemos pensar en cierta forma que espera un string que represente un comando y lo ejecuta.
+### Foreground y background
+Un comando en modo foreground es aquel que se ejecuta y no nos deja hacer nada con el bash hasta que se termine su ejecucion. Es como si se ejecutara en primer y unico plano. Por ejemplo:
+`evince -f file.pdf`
+Un comando en modo background es aquel que se ejecuta y nos permite seguir usando ese mismo bash, es como si se ejecutara en segundo plano. Por ejemplo
+`evince -f file.pdf &`
+### Redireccion de entradas y salidas
+Podemos usar los <> para redireccionar las entradas y salidas de los comandos. **Por ejemplo:**
+`echo "Hola" > archivo`
+*Redirige la salida "Hola" al archivo*
+**Otro ejemplo:**
+`echo "Hola" >> archivo`
+*Redirige la salida "Hola" al archivo pero en una nueva linea*
+**Otro ejemplo:**
+`cat < archivo`
+*Redirijo la entrada de cat con el archivo, entonces lee lo que hay en el archivo.*
+**Otro ejemplo:**
+`wc -l > out.txt < in.txt`
+*Cuento cuantas lineas tiene el archivo in.txt y redirijo la salida hacia out.txt*
+### Comandos en secuencia
+Haciendo uso del ***&&*** puedo ejecutar comandos en secuencia si solo si el anterior se ejecuto correctamente. Por ejemplo
+`cd .. && ls`
+### Comandos en pipeline
+Conecto distintos comandos mediante sus entradas y salidas tomando la salida del primer comando y redirigiendola como entrada para el segundo.
+`ls -l | wc -l`
+*Cuenta la cantidad de 'lineas' que hay en el directorio raiz*
+**Otro ejemplo:**
+`cat /proc/cpuinfo | grep 'model name'`
+Muestro el contenido de cpuinfo y filtro lo que tenga la palabra 'model name'
+### Fork
+Tengo un proceso A1
+Luego hago:
+`rc = fork()`
+y ahora existe el proceso A1 padre y el proceso A1 hijo. Dentro del código de A1 puedo hacer cosas dependiendo si **rc>0 (es el padre)** o si **rc=0(es el hijo)**. Si rc<0 error en el fork.
+Notemos que **viven en mundos distintos y no comparten información a menos que hagamos un pipe**. *Por ejemplo si tenemos un int a y le hago fork, y luego en el hijo modifico a, en el padre no se modificara.*
+También notemos que aunque acceden a la misma memoria virtual, no lo hacen con la memoria física. IDEM con los punteros.
+### Pipe
+Un pipe crea dos file descriptors (fd) uno de lectura y otro de escritura. Haciendo uso de estos puedo compartir información entre procesos.
+EJEMPLO:
+Tengo el siguiente proceso A:
+	P(A)
+	fd0 -> stdin
+	fd1 -> out.txt
+	fd2 -> stderr
+Luego hago fork del proceso A, entonces como al hacer un fork se copia prácticamente todo del proceso padre, la tabla de fd del proceso hijo sera:
+	P(A')
+	fd0 -> stdin
+	fd1 ->out.txt
+	fd2 -> stderr
+### Como funciona mybash
+1)Dado un comando (un string) individualiza (parsea) cada parte del mismo:
+- Nombre del programa (wc)
+- Sus argumentos (-l)
+- Archivos de redireccion de entrada y salida "out.txt", "in.txt"
+2)Una vez parseado el comando, ejecuta el comando en el SO
+#### Comando simple
+Un comando simple consta de un nombre, sua argumentos y sus archivos de redireccion de entrada y salida. Ejemplo:
+`wc -l > out.txt < in.txt`
+#### Pipeline
+Un pipeline consta de dos o mas comandos simples conectados via operador |
+`ls -l | wc -l`
+### Ejecutar un comando
+Para ejecutar un comando implementamos el modulo execute.c, este es el que invoca las llamadas al sistema (syscalls) necesarias para ejecutar los comandos en un ambiente aislado de nuestro bash.
+Algunas de las syscalls que vamos a necesitamos son:
+- fork() -> crea un nuevo proceso hijo
+- pipe() -> crea una tuberia para comunicar procesos
+- dup() -> sirve para modificar los fd
+- wait() -> para bloquear un proceso
+- execvp() -> ejecutar un programa externo
+Veamos algunos ejemplos:
+
+| Entrada                | Syscalls relacionadas                                             | Comentario                                                                      |
+| ---------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| cd ../..               | chdir()                                                           | El comando es interno, solo hay que llamar a la syscall de cambio de directorio |
+| gzip LabG04.tar        | fork(); execvp(); wait();                                         | Ejecutar el comando y el padre espera                                           |
+| xesyes &               | fork(); execvp();                                                 | Un comando simple sin redirectores ni espera                                    |
+| ls -l ej1.c > out < in | fork(); open(); close(); dup(); execvp(); wait()                  | Redirige tanto la entarda como la salida y el shell padre espera                |
+| ls \| wc -l            | pipe(); fork(); open(); open(); close(); dup(); execvp(); wait(); | Sin ejecucion en 2do plano, dos comands simples conectados por un pipeline      |

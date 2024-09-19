@@ -24,6 +24,8 @@ Me muestra todos los accesos a memoria que hace el programa cuando ejecuta en la
 - **L**: hizo una carga de la memoria
 - **S**: escribió en la memoria
 Primero muestra la dirección y luego la cantidad de bytes
+### Software y hardware
+Ambos deben trabajar y diseñar en conjunto los avances, por ejemplo el crear el MMU se dio gracias a una necesidad de software y se termino implementando en el hardware.
 
 ---
 
@@ -493,3 +495,98 @@ Cuando hago free(p) luego debo poner p=NULL. SI no lo hago y luego pongo otro fr
 Pero hay que tener cuidado porque con el double free podríamos atacar el heap generando un ataque conocido como heap smashing.
 #### Variable no inicializada
 Si declaro una variable pero no la inicializo podría darme error o no ya que tendrá el valor que tenia antes esa variable si es que existía. La memoria nunca esta vacía, tendrá en el caso de que no había nada antes basura.
+
+---
+
+## Virtualizar memoria
+### MMU (Memory managment unit)
+Los procesadores tienen una unidad especializada en administrar la memoria. Esta parte es muy importante porque nos brinda **protección**. Antiguamente esto no solía estar ya que era muy caro y difícil de implementar por ende los programas en memoria podían acceder a cualquier parte de la memoria sin ningún tipo de restricción.
+Entonces si queríamos tenes dos programas funcionando a la vez era complicado porque un programa podía comerse a otro.
+**El MMU debe ser muy rápido y no producir ninguna sobrecarga al sistema**, porque a diferencia de ejecutar instrucciones para las cuales no hay ninguna capa intermedia, para las direcciones de memoria si hay una capa intermedia.
+### Como funciona un programa y procesador respecto a los accesos a memoria
+Veamos un programa que es raro ya que se basa en un problema matemático sin resolver:
+```
+#include <unisdt.h>
+void _start(start) {
+	unsigned long x = 931386509544713451UL; //https://en.wikipedia.org/wiki/Collatz_conjeture
+	while (1<x) {
+		if (x%2==0) x = x/2;
+		else x = 3*x+1;
+	}
+	_exit(0);
+}
+//gcc -01 -nostartfiles -s -static collatz.c
+```
+Cuando x es 1 para. La pregunta es si desde todo numero inicial yo eventualmente llego a 1 aplicando esos pasos, es algo que todavía no se sabe porque no esta probado para todos los números.
+Notemos que ejecutar un código implica acceder a la memoria ya que von Neumman lo ingenio de esta forma, por lo tanto para ejecutar un programa hay que leer si o si la memoria.
+### Otro ejemplo
+Veamos otro ejemplo con el siguiente programa:
+```
+#include <unistd.h>
+#define N 1024
+
+int a[N] = {0}; //un int ocupa 4bytes => ocupa 4Kbytes
+
+void _start(void) {
+	for(int i=0; i<N; ++i)
+		a[i]=i;
+	exit(0);
+}
+//gcc -01 -nostartfiles -s -static global_array.c
+```
+Luego si hacemos objdump de esto podremos ver el hexa. Luego si lo analizamos nos daremos cuenta que la parte del loop es la siguiente:
+
+![ScreenShot](Imagenes/loop_global_array.png)
+
+Luego esta hecha una tabla con las direcciones de memoria a las que se accede. Lo importante es resaltar que las que tienen un tab son las con una sola instrucción acceden a dos posiciones de memoria distintas (porque son el mov).
+### Memoria virtual a física
+Es muy importante entender que cada acceso a memoria necesita traducir de memoria virtual a física, ya que siempre los programas creen que tienen toda la memoria a su disposición y que empiezan desde la posición 0.
+### Traducción de direcciones
+Es necesario revisar que cada dirección este en el rango adecuado. El **MMU** es el encargado de revisar que cada acceso a memoria no se sale afuera y después si no se sale tiene que transformar esa dirección virtual a la dirección física. **Esto se hace con cada dirección**, ya sea que sea para traer instrucción o leer y escribir memoria es necesario traducirla. Ese proceso se llama traducción de direcciones.
+### Emulación
+Es muy importante resaltar que en la RAM todas las instrucciones que se ejecutan no se ejecutan como tal como sucede con el procesador, sino que se **emulan** porque se ejecutan es un espacio de direcciones que no es real, es virtual.
+### Proceso que se hace
+El proceso que se realiza con la memoria es el siguiente:
+- Primero el SO debe saber y mantener registros de que partes de las memoria física están en uso y que partes no. Caso contrario no podría decidir con claridad en que lugar forkear los programas.
+- Las direcciones de memoria pasan por un comparador que revisan que las posiciones de memoria están dentro de los limites.
+- Pasan por un traductor que traduce de memoria virtual a memoria física.
+### Address translation (o dynamic relocation)
+Toda dirección que el procesador acceda se la va a sumar a al **registro base**, o sea una dirección virtual se pasa a una dirección física sumándole el registro base. Luego cada memoria generada por el proceso es en una dirección virtual.
+	***physical address = virtual address + base***
+En código seria algo así lo que sucede:
+```
+v2p(void *vaddr) {
+	if (vaddr<limit)
+		paddr = vaddr+base;
+	else
+		raise TRAP.SEGFAULT;
+
+return paddr;
+}
+```
+**Este programa esta en CPU**, es imposible que este en SO debido a que necesita hacerse extremadamente rápido.
+Ahora nos podríamos preguntar que pasa con el registro limite. Bueno este ayuda con la protección ya que antes de hacer nada el MMU verifica que la dirección de memoria este dentro de los limites. Si un proceso genera una dirección de memoria negativa o mayor o igual al limite el CPU devolverá un error conocido como excepción **(segmentation fault)** y el proceso sera terminado.
+#### Operación privilegiada
+Ademas tenemos que notar que cambiar y leer el registro base y limite es una **operación privilegiada** la cual se ejecuta en modo kernel
+#### Ejemplo
+	base = 16384
+	limite = 4096
+	v = 0 -> p = 0 + 16384 = 16KiB
+	v = 1024 -> p = 1024 + 16384 = 17KiB
+	v = 3000 -> p = 3000 + 16384 = 19384
+	v = 5000 -> fuera de rango, **SEGFAULT** *(porque sobrepasamos el limite de 4096)*
+Vemos que los limites actúan sobre la memoria virtual.
+Entonces cuando sucede un segfault, se para el proceso, se libera toda la memoria relaciona a el y se vuelve al kernel, y del kernel vamos al próximo programa.
+#### Segmentacion en la actualidad
+Hoy día segmentación es algo que no se usa porque estaba hecho para 32bits, hoy en día se usa pacciona.
+#### Preguntas y respuestas
+***¿Que tipo de estructura de datos forman los registros (base, limite)?***
+Forman una tupla de datos. La maneja el microprocesador, luego el código que tengo impreso adentro del microprocesador utiliza esa estructura de datos para chequear cada acceso a memoria ya sea por instrucciones, carga o almacenamiento.
+***Si tengo 10 procesos en mi SO ¿Cuantos registros (base, limite) tengo en el procesador?***
+1 par
+***¿Cómo hago para cambiar de proceso si cada proceso tiene un (base, limit) distinto?***
+Guardo (base, limit) en el struct proc (PCB). Cuando cambio de contexto cambio de registro base y limite, gracias a la multiplexacion en tiempo del procesador hace que se multiplexe en espacio la memoria.
+***¿Quien establece inicialmente los registros (base, limite)?***
+El SO cuando inicia la computadora.
+***¿Un programa de usuario puede tocar (base, limite)?***
+No ya que eso es una operación privilegiada, para hacerlo debo estar en modo kernel.
