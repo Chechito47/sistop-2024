@@ -31,6 +31,18 @@ cuando su valor es 0.
 `int sem_down(int sem)` →Decrementa el semáforo ”sem” bloqueando los procesos
 cuando su valor es 0. El valor del semaforo nunca puede ser menor a 0
 
+#### Adquire
+Nos podemos de acuerdo para usar un recurso, si alguien quiere hacer un adquire del recurso que estoy usando no va a poder. Se usa para recursos compartidos.
+Supongamos que dos queremos agarra el mismo recurso, el que sea mas rapido lo agarra y el tro se queda esperando
+#### Relese
+Libero el recurso que estaba usando para que otro lo pueda usar
+#### Wakeup
+Hace que levanten los procesos que se fueron a dormir dependiendo de que lo que esperan para despertarse, despierto a todos los procesos que esperan x cosa
+#### Sleep
+No hago mas nada como proceso entonces cambio de estado a sleep. Cuando voy a dormir espero a que alguien me despierto cuando suceda un evento x
+#### argint
+Sirve para pasar los argumentos. Necesitamos usarla para poder implementar el camino de las syscalls e implementar las syscalls con argumentos
+
 ### Como implementarlas
 Para implementar las syscalls deberán usar `acquire() release(), wakeup(),`
 `sleep() y argint()`
