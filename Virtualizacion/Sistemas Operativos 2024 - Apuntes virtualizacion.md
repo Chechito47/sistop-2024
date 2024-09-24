@@ -349,7 +349,7 @@ Es importante entender que todos los elementos que declaro en un programa tienen
 
 ---
 
-## Virtualizacion de la RAM
+## **Virtualizacion de la RAM**
 Virtualizar la RAM es un proceso mediante el cual hacemos creer a los programas que disponen de toda la memoria fisica disponible para ellos solos. Se hace mediante distintas tecnicas con ayuda tanto del software como del hardware multiplexando. Es importantisimo poder virtualizar la memoria no solo por la efeciencia sino por la seguridad.
 ## Objetivos
 1. ***Transparencia***: queremos que el SO implemente la memoria virtual de una manera la cual sea invisible para otros programas de manera tal que estos no sepan que su memoria es virtualizada y crean que disponen de toda la memoria física
@@ -590,3 +590,286 @@ Guardo (base, limit) en el struct proc (PCB). Cuando cambio de contexto cambio d
 El SO cuando inicia la computadora.
 ***¿Un programa de usuario puede tocar (base, limite)?***
 No ya que eso es una operación privilegiada, para hacerlo debo estar en modo kernel.
+
+---
+
+## **Segmentación**
+Hasta ahora, poníamos enteros los espacios de memoria de cada proceso en la RAM, pero podemos notar que hay un gran espacio que muchas veces no es aprovechado entre el heap y el stack, que a pesar de que no este siendo utilizado por el proceso ocupa espacio de la memoria física.
+Para solucionar este problema surge la **segmentación**, la idea es que en lugar de tener solo un registro base y limite en el MMU tener un par por cada segmento lógico del espacio.
+### Segmento
+Un segmento es una parte (continua) del espacio de dirección de un largo en particular. Nosotros tenemos 3 segmentos lógicos en nuestro espacio:
+- code
+- stack
+- heap
+**Lo que la segmentación le permite al SO es poner cada uno de estos segmentos en distintos lugares de la memoria física.** Para ello se necesita que el hardware soporte segmentación.
+#### Ejemplo
+Veamos un ejemplo de como se mapea la memoria en segmentación con la siguiente situación, tenemos los siguientes registros en memoria fisica:
+
+![ScreenShot](Imagenes/ejemplo_segmentacion.png)
+
+*Supongamos que una referencia es hecha hacia la dirección virtual 100, que en este caso supongamos que esta en el segmento del code, usemos con referencia las siguientes posiciones de memoria virtual:*
+
+![ScreenShot](Imagenes/ejemplo_segmentacion_posiciones.png)
+
+*Cuando se haga el instruction fetch, el hardware va a sumar el valor del offset(**100 en este caso**) a la dirección base del segmento para encontrar la posición de memoria física* **100+32K(32768) = 32868**. *Luego verificara si la dirección virtual (100) esta dentro de los limites (2K) y si lo esta hace la referencia hacia 32868.*
+#### Ejemplo 2
+*Ahora supongamos que la dirección virtual es 4200 por lo tanto estaría en el heap. Si simplemente agregáramos la dirección virtual al registro base del heap tendríamos 4200+34816 = 39016* **la cual no es la dirección física correcta**.
+**Lo que debemos hacer es encontrar el offset correcto**, o sea restar el registro donde inicia el segmento a la dirección virtual ya que caso contrario estaríamos dando una dirección incorrecta porque no hay 4199 registros antes en el heap.
+**Entonces el offset seria 4200-4096 = 104**
+Luego sumamos el offset al registro base **104+34816 = 34920 y esta es la dirección de memoria física.**
+***Por lo tanto como va a estar organizada la memoria virtual y física pueden ser totalmente distintas.*** El proceso piensa que esta organizado como lo esta en la memoria virtual, el SO sabe que en realidad esta organizado como lo esta en la memoria física.
+### Como saber a que segmento nos referimos - forma explicita
+Una forma de saber a que segmento de nos referimos es hacerlo mediante una aproximación **explicita**, para ello se divide el espacio de memoria en segmentos según los bits mas significativos.
+Pasaríamos de tener algo así:
+`(ba, bo)`
+A tener algo así:
+`((ba0, bo0), (ba1, bo1), (ba2, bo2))`
+(donde ba=base y bo=borde)
+De esto se encarga el hardware.
+#### Ejemplo
+Por ejemplo, supongamos que tenemos 3 segmentos, entonces con tener dos bits nos alcanzaría para distinguirlos. Entonces si tuviéramos 14bits y usamos los 2 primeros seria algo así nuestra dirección virtual:
+
+![ScreenShot](Imagenes/ejemplo_segmentacion_bits_significativos.png)
+
+Ahora, sigamos con el ejemplo de antes y supongamos que 00 hace referencia al code, 01 al heap.
+Supongamos que queremos ver como se traduce la dirección virtual 4200:
+
+![ScreenShot](Imagenes/ejemplo_segmentacion_bits_4200.png)
+
+Entonces los 2bits mas significativos indican que estamos haciendo referencia al heap y los otros 12 son el offset que en hexa seria 0x068 o 104 en decimal.
+#### Problemática
+Notemos que al usar dos 2bits y tener solo 3 segmentos un segmento del espacio estaría sin usar. Para aprovecharlo, los SO suelen poner el code junto al segmento heap y así poder usar solo 1bit para indicar a que segmento nos referimos.
+Un problema de esta implementacion es que cada segmento esta limitado a una cantidad de bits máxima. *En nuestro ejemplo ese limite seria de 4KB ya que teníamos 16KB que se dividieron en 4 segmentos de 4KB cada uno porque usamos 2bits para distinguir los segmentos.* Entonces si un programa quisiera agrandar su segmento no podría.
+Existen otros métodos para determinar los segmentos.
+#### Forma implícita
+También existe una forma implícita de identificar a que segmento se refiere. Esto sucede en los procesadores intel detectando a través del tipo de instrucción si accede al code, stack o heap.
+¿Como lo hace?
+- Si ingresa al code se da cuenta porque hace un instruction fetch
+- Si ingresa al stack porque hace push, eax, pop, edx
+- Si ingresa al heap el resto, o sea todos los mov
+### Que sucede con el stack
+*El stack es complicado de llenar, tendría que hacer funciones recursivas las cuales no se suelen utilizar.*
+El stack fue relocalizado en la memoria fisica pero con el detalle que ahora **crece para arriba**, *entonces siguiendo el ejemplo de antes ahora inicia en 28KB y crece hasta 26Kb*
+Para que esto sea posible el hardware debe saber que hay segmentos que crecen para abajo, entonces nuestro diagrama de segmentos de un ejemplo anterior quedaría de la siguiente forma:
+
+![ScreenShot](Imagenes/ejemplo_segmentacion_posiciones_abajo.png)
+
+Entonces el hardware debe hacer las operaciones de manera distinta para soportar que el stack crezca al revés.
+La base del stack esta en la parte de abajo y el limite en la parte de arriba indica cuento puede crecer, esto es lo que lo diferencia de los otros segmentos.
+#### Ejemplo
+Supongamos que queremos acceder a la dirección virtual 15KB la cual debería mapear a la dirección 7KB física. En binario la dirección virtual seria la siguiente:
+`11 1100 0000 0000 (0x3C00 en hexa) => 15KB`
+El hardware usuaria los 2bits mas significativos para obtener el segmento lo que nos estaría dejando con un offset de 3KB
+`1100 0000 0000 => 0xC00 => 3072 => 3KB`
+Pero le estaríamos errando porque ahora no crece para abajo sino que para arriba.
+Para obtener el offset negativo correcto debemos restar el tamaño máximo del segmento al offset que tenemos (o sea 3KB).Por lo tanto en este caso seria:
+`3KB-4KB = -1KB`
+Luego a nuestro offset le tenemos que sumar el el registro base del segmento, en este caso es:
+`-1KB+28KB = 27KB`
+Entonces la dirección de memoria física correcta es 27KB.
+### Code sharing
+Existen situaciones en las que podría ser útil compartir segmentos de memoria entre diferentes espacios de memoria, en especial compartir el code.
+Para poder hacer eso se necesita que el hardware soporte algo conocido como **protección de bits**. Para ello se añaden algunos bits por segmentos indicando si un programa puede o no leer o escribir un segmento, ademas de si puede ejecutar código que resida en ese segmento.
+Si un segmento es indicando como solo lectura el mismo código puede ser compartido por múltiples procesos sin problemas de aislamiento ya que cada proceso piensa que tiene su propia memoria mientras en realidad el SO comparte la memoria entre distintos procesos.
+Siguiendo los ejemplos anteriores, la tabla quedaría de la siguiente forma:
+
+![ScreenShot](Imagenes/ejemplo_segmentacion_posiciones_proteccion.png)
+
+Con los protection bits el algoritmo descrito anteriormente también cambiaría:
+Ademas de tener que chequear que la dirección virtual este dentro de los limites el hardware debe verificar si cada acceso esta permitido. Si un proceso trata de escribir sobre un proceso solo de lectura se producirá una excepción.
+*Por ejemplo podría ser útil si se hace un fork ya que el code seria exactamente el mismo para ambos procesos.*
+*Notemos que el code no crece, el stack si y el heap tambien.*
+#### Ejemplo
+Si se hace un fork, se va a dar el siguiente caso:
+`P0: ((ba0, bo0), (ba1, bo1), (ba2, bo2))`
+`P1: ((ba0, bo0), (ba1, bo1), (ba2, bo2))`
+Donde en ambos procesos vamos a tener la misma secuencia de registros, puedo hacer que dos procesos en memoria apunten al mismo segmento de code, stack o heap. Esto tiene mucho sentido con el code.
+Si hago execvp agrego un nuevo segmento de code.
+### Fine grainded and coarse grained
+Existen distintas divisiones de segmentos, las mas comunes son:
+- **Coarse grained** es cuando se dividen los segmentos en espacios relativamente grandes.
+- **Fine grained** es cuando se dividen los segmentos en espacios pequeños.
+### Segment table
+Para soportar distintos segmentos se necesita que el hardware tenga una **segment table** para almacenar los valores en memoria.
+### Problemas de la segmentación
+Ya nos podemos dar una idea de como funciona la segmentación:
+Partes del espacio de memoria son re ubicados en la memoria física a medida que el SO se ejecuta logrando así un gran ahorro de memoria física comparado a tener solo un par de registros limite y base.
+Pero la segmentación también trae consigo varios problemas:
+1. El primero es ¿Que debe hacer el SO durante un context switch? Por ahora sabemos que el SO debe guardar los registros del segmento y restaurarlos cuando sea necesario.
+2. El segundo es cuando la interacción con los segmentos crece. *Por ejemplo cuando un proceso llama a malloc, en algunos casos el heap va a ser capaz de atender ese llamado y darle espacio pero en otros casos no y necesitara crecer. Para este ultimo caso la librería memory-allocation va a hacer una syscall para hacer crecer el heap. Luego el OS debe decidir si darle mas memoria (usualmente es lo que sucede) o si denegar la petición ya sea por falta de memoria física o porque el proceso ya uso demasiada memoria*
+3. El tercero es manejar el espacio libre en la memoria física. Cuando un nuevo proceso es creado el SO debe ser capaz de encontrar memoria física disponible para los segmentos de ese proceso. Pero esto no es sencillo ya que lo segmentos varían según el proceso tanto en numero como en tamaño. Rápidamente la memoria física se llena de pequeños espacios libres haciendo complicado ubicar nuevos segmentos o hacer crecer los existentes. Este problema se llama **external fragmentation.**
+### External fragmentation y compactar memoria física
+Veamos un ejemplo para entenderlo mejor. Supongamos que aparece un proceso y queremos ubicar un segmento de 20KB. Tenemos 24KB libres pero no son contiguos por lo tanto el SO no podría ubicarlo. Estamos ante un claro caso de external fragmentation, tenemos la cantidad de memoria necesaria pero no podemos ubicar el segmento.
+La solución a este problema viene dada por **compactar la memoria física** *(compact physical memory)* reorganizando los segmentos actuales.
+*Por ejemplo el SO podria detener los procesos corriendo, copiar su informacion a una posicion contigua, cambiar sus registros de segmentos para que apunten a la nueva direccion fisica y asi obtener optimizar el uso de la memoria fisica*
+#### Problema de compactar memoria
+Pero compactar memoria es muy laborioso, ya que copiar los segmentos es una peticion intensiva tanto para la RAM como la la CPU. Ademas existe un fenómeno conocido como **memory wall** debido a que la velocidad de los procesadores crecio mucho pero la velocidad de acceso a la memoria por mas que tengamos las mas rapidas.
+Usualmente no se mueven las cosas porque es muy caro el hacerlo.
+
+![ScreenShot](Imagenes/memoria_compactada.png)
+
+Existen otros muchos algoritmos para aprovechar los espacios de memoria como:
+- **best-fit** (tiene una lista con los espacios libres y retorna el que tenga el valor mas cercano al que se necesita)
+- **worst-fit**
+- **first-fit**
+- **buddy algorithm**
+**Pero a pesar de que existan tantos el external fragmentation va a seguir existiendo, el objetivo del algoritmo es minimizar los casos en que sucedan.**
+***Aunque segmentacion ya no se usa, lo que usan las computadoras actuales es paginacion.***
+
+---
+
+## **¿Cómo manejar el espacio libre?**
+Manejan el espacio libre puede ser sencillo si tenemos el espacio divido en unidades de tamaños fijo, pero si son unidades de distinto tamaño se hace mucho mas complicado
+Notemos que los espacios no deben ser de tamaño fijo ya que podría traer problemas como fragmentacion interna(por ejemplo si son todos de 4KB pero solo necesito 1byte desperdicio memoria) o que seria muy fácil hacer varios pedidos de malloc y dejar usar toda la memoria.
+### Asumimos
+Para responder a esta problemática vamos a asumir que malloc() y free(), específicamente `void *malloc(size_t size)` toma un solo parámetro **size** y devuelve un puntero apuntando a la ubicacion con ese tamaño.
+`void free(void *ptr)` toma un puntero y libera el espacio correspondiente.
+### Internal fragmentation
+Los asignadores o "**allocators**" son aquellos encargados de manejar una región continua de bytes. Por ejemplo pueden pedir que una región crezca cuando necesite mas memoria. Estos pueden sufrir de un problema conocido como **internal fragmentation** (*no confundir con external fragmentation*).
+Si un allocator maneja o distribuye porciones de memoria mayores a las solicitadas habría espacios de memoria sin utilizar. Esos espacios de memoria se consideran como internal fragmentation.
+### Splitting y coalescing
+Splitting y coalescing es una tecnica muy usada por los alocators, vienen de la mano una con la otra.
+Supongamos que tenemos una lista como la siguiente:
+
+![ScreenShot](Imagenes/splitting_coalescing_tabla.png)
+
+Vemos que tenemos 30bytes en un heap donde los 10 primeros están libres, los 10 de en medio ocupados y los últimos 10 libres. La lista que contiene los bytes libres se llama ***free list***(se divide en chunks). Vemos que en este caso la free list de este heap tendría dos elementos:
+1. Uno que describe los 10 primeros bytes (bytes 0 a 9)
+2. Otra que describe los 10 últimos (bytes 20 a 29)
+
+![ScreenShot](Imagenes/splitting_coalescing_1.png)
+
+*(El addr:0 indica que empieza en la posición 0 y leng:10 indica el largo, luego addr:20 indica que hay otro lugar libre en la posición 20 y len:10 que el largo es de 10)*
+Cualquier pedido que necesite mas de 10bytes va a devolver un NULL porque no hay ningun espacio continuo de esa cantidad disponible. Si se piden exactamente 10bytes cualquiera de los dos espacios disponibles va a poder atender el pedido. ¿Pero que pasa si viene un pedido de menos de 10bytes?
+#### Splitting
+Por ejemplo, supongamos que viene un pedido de un solo byte. En este caso el allocator va hacer algo conocido como **Splitting**: encuentra un **chunk**(*espacio de memoria de un determinado tamaño*) que pueda satisfacer el pedido y lo divide en 2. El primer chunk va a retornar al que lo llamo y el segundo va a seguir en la free list.
+*En nuestro ejemplo, vino un pedido de 1byte y el allocator decidio usar el segundo chunk para atender la petición, el malloc() va a retornar 20(la dirección donde nos paramos ya que es el comienzo de ese chunk y ahí va a alojar el byte nuevo) Entonces la lista va ahora va a ser tal que así:*
+
+![ScreenShot](Imagenes/splitting_coalescing_2.png)
+
+Entonces la lista permanece casi igual salvo que ahora hay 1byte mas y que la región libre que antes empezaba en 20 ahora lo hace en 21 con un largo de 9.
+La técnica de slipt es comúnmente usada por allocators cuando las peticiones son menores que cualquiera de los chunks libres.
+#### Coalescing
+Es un corolario del sliptting. *Sigamos con el ejemplo de antes, donde teníamos 10bytes libres, 10 ocupados y 10 mas libres:*
+**¿Que pasaría si en esa situación hacemos un free(10)?**
+Lo obvio seria pensar que simplemente liberamos la memoria y listo, pero sucederia algo como lo siguiente:
+
+![ScreenShot](Imagenes/splitting_coalescing_3.png)
+
+A pesar de que tenemos todo el heap libre no podríamos atender una petición de 20bytes porque los espacios libres no son contiguos.
+Para solucionar este problema, los allocators ***juntan (coalesce)*** los espacios libres cuando un chunk de memoria es liberado si es que esta contiguo a otro que esta libre ya sea a izquierda o derecha haciendo así un chunk mas grande.
+
+![ScreenShot](Imagenes/splitting_coalescing_4.png)
+
+*Notemos que así lucia el heap antes de realizar ninguna allocation*
+
+### Seguimiento del tamaño de las regiones asignadas
+`free(void *ptr)` no toma ningun parametro de pero sabemos que dado un puntero determina la direccion de memoria y la libera.
+Para poder llevar a cabo esta tarea la mayoria de allocators guardan un poco mas de informacion en un **header block** que se guarda en la memoria.
+Ejemplo: examinemos un bloque de 20bytes al que ptr apunta. Imaginemos que se llama a un malloc() que guarda los resultados en ptr (ptr = mallor(20);). Nos basamos en lo siguiente:
+
+![ScreenShot](Imagenes/ejemplo_allocated_1.png)
+
+El header minimamente va a contener el tamaño de la region asignada (en este caso es 20), puede contener otros punteros y va a contener un **numero magico** que lo usamos para chequear que la memoria no fue alterada. Supongamos que header es de la siguiente forma:
+```
+typedef struct {
+int size;
+int magic;
+} header_t;
+```
+
+Este ejemplo va a ser algo como lo siguiente:
+
+![ScreenShot](Imagenes/ejemplo_allocated_2.png)
+
+Cuando se llama a free(ptr) la libreria usa simple pointer arithmetic para encontrar donde comienza el header.
+```
+void free(void *ptr) {
+header_t *hptr = (header_t *) ptr - 1;
+...
+```
+Después de obtener el puntero al header, la librería puede determinar si el numero mágico es el esperado o no haciendo uso del assert:
+` (assert(hptr->magic == 1234567))` y luego calcular el tamaño total de le nueva región libre mediante matemática.
+### Correcto tamaño de la región libre
+Notemos que el tamaño de las regiones libres son:
+`tamaño del header + espacio asignado por el usuario`
+*Por lo tanto cuando el usuario pide N bytes la libreria no busca un espacio de N bytes sino que busca un chunk de N bytes + el tamaño del header*
+### Meter datos en una free list
+Asumamos que tenemos un chunk de 4096KB (con heap de 4KB). Para manejar esto como una free list primero debemos inicializarlo. La lista va a tener sola una entrada de 4096KB-tamaño del header = 4088.
+El head pointer contiene el inicio de la dirección virtual, supongamos que es 16KB. Entonces hasta ahora tendríamos algo de la siguiente forma:
+
+![ScreenShot](Imagenes/ejemplo_meter_free_list_1.png)
+
+Ahora imagenemos que tenemos una peticion de 100bytes. Para atenderla la libreria debe encontrar un chunk con espacio suficiente. Como solo hay un chunk de 4088B ese va a ser elegido. Luego el chunk va a ser dividido en dos:
+- Un chunk lo suficientemente grande como para atender la solicitud
+- Y el chunk que estará formado por el resto que queda libre
+Asumiendo que el head es de 8bytes el espacio ahora sera el siguiente:
+
+![ScreenShot](Imagenes/ejemplo_meter_free_list_2.png)
+
+Entonces notar que la solicitud de 100bytes ocupa 108bytes porque es **espacio solicitado+head**
+Si hubiera 3 solicitudes iguales el gráfico seria así:
+
+![ScreenShot](Imagenes/ejemplo_meter_free_list_3.png)
+
+Entonces 324bytes del heap estan asignados, hay 3 heads de 8bytes cada uno y 3 espacios de 100bytes cada uno. La free list tiene 3764bytes.
+**¿Que pasaria se se llama a un free?**
+Supongamos que hacemos un free(16500) liberando asi el chunk del medio *(16500 = 16384(comienzo de la memoria)+108(del chunk previo)+8(del head previo))*. El resultado seria algo así:
+
+![ScreenShot](Imagenes/ejemplo_meter_free_list_4.png)
+
+La libreria nota el tamaño del chunk liberado y la añade a la free list.
+*Entonces lo que tenemos es una lista que empieza con un chunk de 100bytes a la cual apunta el head y un espacio libre de 3764bytes. Notar que el espacio esta fragmentado pero es algo comun que esto suceda*
+Ahora hagamos un ultimo ejemplo, supongamos que los dos ultimos chunks están libres, si no los juntamos terminaríamos con fragmentacion como es el caso del siguiente gráfico:
+
+![ScreenShot](Imagenes/ejemplo_meter_free_list_5.png)
+
+### Hacer crecer el heap
+¿Que sucede cuando el heap se queda sin espacio?
+Podría darse el caso en que devuelva NULL fallando o podría suceder que el heap pida memoria para agrandarse y poder tener mas chunks (*en los sistemas UNIX se solía hacer mediante sbrk, para ello el SO encontraba paginas físicas libres y mapeaba en ellas las direcciones de los espacios de los procesos devolviendo el valor final del nuevo heap*)
+### Estrategias para manejar el espacio libre
+Existen diferentes métodos y estrategias para manejar el espacio libre. Los allocators idealmente deben ser rápidos y minimizar la fragmentacion pero no existe una estrategia perfecta. Algunos de los métodos mas conocidos son:
+#### Best fit
+Es simple, primero busca entre la free table los chunks con espacio mayor o igual al que se necesita y luego selecciona al menor de ellos (*que vendría a ser el best-fit chunk o smallest fit chunk*).
+Best fit trata de reducir el espacio desperdiciado. Pero hacer esto tiene un costo ya que las búsquedas reducen el rendimiento y si por ejemplo sucede una búsqueda sin sentido (ya sea porque el primero era el candidato ideal o lo que fuere) perjudicaría usando muchos recursos para ello.
+#### Worst fit
+Es lo contrario a best fit, busca en la free table el chunk con mas espacio disponible entre todos y lo devuelve dejando así el espacio restante de este en la free list el cual sera grande.
+Worst fit trata de dejar chunks grandes libres en lugar de chunks pequeños. Otra vez el problema es el rendimiento porque debe hacer una búsqueda entera entre los chunks.
+#### First fit
+Es un método simple, busca el primer chunk con memoria suficiente para poder responder a la solicitud y lo devuelve con ese fin.
+Tiene como ventaja que es un método rápido al no tener que hacer búsquedas exhaustivas pero como desventaja que suele llenar los primeros espacios de la free table con solicitudes pequeñas.
+Un enfoque distinto se le puede dar si se usa **address-base ordering** para mantener free table ordenada según la dirección de espacios libres facilitando juntar espacios libres y reduciendo la fragmentacion.
+#### Next fit
+Deja un puntero extra en el ultimo lugar en que se busco de esta forma las búsquedas se hacen mas uniformemente evitando el *¿splittering?* al comienzo de la free table.
+El rendimiento es similar a first fit ya que evita las búsquedas exhaustivas.
+#### Segregated lists
+Si un proceso en particular tiene una solicitudes que hace con frecuencia (llamemosla popular) mantiene separada una lista específicamente para atender solicitudes de ese tamaño mientras que el resto de solicitudes son atendidas de manera general.
+Teniendo un chunk dedicado a esto, la fragmentacion es menos común y los allocations y free se hacen mas rápido.
+Pero esto nos introduce a un sistemas mas complicado y preguntas como cuanta memoria debería dedicarse a este chunk o cuanta se debería dedicar a atender solicitudes en general pueden surgir
+#### Buddy allocation (binary buddy allocation)
+Esta diseñado para hacer los coalescing mas simples (o sea juntar memoria de manera mas sencilla). La memoria esta pensada como un espacio de ***2 elevado a la N***.
+Cuando una solicitud es hecha la búsqueda por espacio libre se divide en 2 de manera recursiva hasta que un bloque con suficiente memoria es encontrado y se lo devuelve.
+Por ejemplo, supongamos que tenemos 64KB de memoria total. Queremos retornar 8KB de memoria entonces cuando el allocator lo hace **verifica si el "buddy" (o sea quien esta al lado) esta libre o no**, si lo esta los junta formando 16KB y repite el proceso hasta encontrar un buddy en uso.
+
+![ScreenShot](Imagenes/buddy_heap.png)
+
+Como vemos es un proceso recursivo con forma de árbol.
+#### Ejemplos
+Supongamos que tenemos la siguiente free list con 3 elementos de tamaño 10, 30 y 20 respectivamente (ignoremos los heads y otros detalles)
+
+![ScreenShot](Imagenes/ejemplo_manejo_espacio_libre_1.png)
+
+**Asumamos que viene una solicitud de 15:**
+Best-fit buscaría por toda la lista hasta encontrar que 20 es el mejor candidato resultando la siguiente lista donde vemos que el chunk de 20 ahora es de 5:
+
+![ScreenShot](Imagenes/ejemplo_manejo_espacio_libre_2.png)
+
+Worst-fit hace la misma búsqueda pero en vez de seleccionar el chunk con 20 selecciona el de 30 resultando en la siguiente lista:
+
+![ScreenShot](Imagenes/ejemplo_manejo_espacio_libre_3.png)
+
+First-fit encuentra el mismo chunk que worst-fit pero con la diferencia que no tuvo que buscar en toda la lista.
+
+---
+
+
