@@ -1,5 +1,5 @@
 Traducción de direcciones
-```
+```js
 0: movl $128, %ebx
 5: movl (%ebx), %eax
 8: shll $1, %ebx
@@ -22,7 +22,7 @@ Luego la secuencia de acceso a memoria física seria:
 En C los puntero y arreglos son lo mismo, cuando me refieron por ejemplo a:
 `a[N]` hago referencia a la posicion de memoria en donde empieza a
 Los arreglos son un puntero al inicio del arreglo, podriamos hacer lo siguiente:
-```
+```c
 int main(void) {
 	int a[16];
 	a[5] = 4;

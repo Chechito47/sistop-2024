@@ -1,4 +1,4 @@
-# VIRTUALIZACION
+yi# VIRTUALIZACION
 ## **Curiosidades - anotaciones libres**
 ### Basurero de linux
 La direccion /dev/null es el inodoro de linux.
@@ -384,18 +384,20 @@ De esta manera estrellita p vale NULL solo dentro de las llaves al igual que j=0
 **A medida que voy creando cosas dentro de la llave estas se van creando arriba de la pila.** Creo el primer p en la pila, luego el que esta dentro de la llave lo crea arriba de ese, el que sigue arriba, el que le sigue arriba y así... Luego hago pop y bajo del stack.
 ### Mostrar valor de un registro del stack
 Podríamos mostrar el valor de un registro del stack que no conocemos de manera simple:
-`#include <stdlib.h>`
-`#include <stdio.h>`
-`int main() {`
-`int a;`
-`int *q = &a;`
-`printf("%d\n", *(q+2));`
-`return 0;`
-`}`
+```c
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+int a;
+int *q = &a;
+printf("%d\n", *(q+2));
+return 0;
+}
+```
 De esta imprimimos el valor de q+2 el cual es desconocido para nosotros.
 #### Stack smash
 Sabemos que el argc esta en el stack pero no sabemos exactamente donde esta, por ende podríamos recorrerlo para tratar de encontrarlo. A priori sabemos que si tenemos un programa que no toma parámetros su valor debe ser 1
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -409,7 +411,7 @@ int main() {
 ```
 Luego si nos ponemos a agregar parámetros cuando llamamos al programa veremos que uno de los valores aumenta, entonces ese es el argc.
 Ahora para saber en que posición esta modificamos un poco el programa:
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -424,7 +426,7 @@ int main() {
 Este es el principio de una técnica de seguridad informática llamada stack smash.
 **Es importante entender la memoria del proceso que esta ejecutando como un arreglo lineal de memoria** donde tengo el stack por un lado que crece decrementando las posiciones de memoria, tengo el heap en un lugar que incrementa las direcciones de memoria.
 #### Ver las syscall que hace
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -446,7 +448,7 @@ Y eso me muestra solo las lineas que tengan algo relacionado a malloc
 #### Malloc y free
 Malloc y free son llamadas a una rutina, a una ficha. Cuando hago un malloc o free algo se toca en el heap.
 Notar que es una mala practica hacer un malloc pidiendo una cantidad fija de memoria. Por ejemplo:
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -466,7 +468,7 @@ Se hace el demangle y me muestra algo que ya puedo entender mejor diciéndome ca
 Valgrind es emulación pura, sirve para ver la memoria utilizada y fijarse si no hay memleaks. Lo que hace es ir instrucción por instrucción del código de maquina y también todas las llamadas a bibliotecas las va ejecutando en un emulador (emula un procesador) y por eso se hace tan lento.
 #### ASLR
 Si hacemos:
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -480,7 +482,7 @@ Veremos que el salto de la dirección entre los valores va a ser de 32bytes. Est
 Pero ojo, malloc pide 32bytes hasta el malloc(25), luego empieza a pedir mas bytes. Esto es debido a que malloc me permite usar hasta 24 bytes, los otros 8 los reserva para hacer sus cosas. El heap tiene un control muy estricto de lo que se tiene adentro.
 #### free():Invalid pointer
 Tenemos que notar que yo solo puedo hacer un free de la memoria que previamente pedí, no puedo hacer free de algo que no pedí, por ejemplo no podría hacer:
-```
+```c
 #include <stdlib.h>
 #include <stdio.h>
 int main() {
@@ -505,7 +507,7 @@ Entonces si queríamos tenes dos programas funcionando a la vez era complicado p
 **El MMU debe ser muy rápido y no producir ninguna sobrecarga al sistema**, porque a diferencia de ejecutar instrucciones para las cuales no hay ninguna capa intermedia, para las direcciones de memoria si hay una capa intermedia.
 ### Como funciona un programa y procesador respecto a los accesos a memoria
 Veamos un programa que es raro ya que se basa en un problema matemático sin resolver:
-```
+```c
 #include <unisdt.h>
 void _start(start) {
 	unsigned long x = 931386509544713451UL; //https://en.wikipedia.org/wiki/Collatz_conjeture
@@ -521,7 +523,7 @@ Cuando x es 1 para. La pregunta es si desde todo numero inicial yo eventualmente
 Notemos que ejecutar un código implica acceder a la memoria ya que von Neumman lo ingenio de esta forma, por lo tanto para ejecutar un programa hay que leer si o si la memoria.
 ### Otro ejemplo
 Veamos otro ejemplo con el siguiente programa:
-```
+```c
 #include <unistd.h>
 #define N 1024
 
@@ -554,7 +556,7 @@ El proceso que se realiza con la memoria es el siguiente:
 Toda dirección que el procesador acceda se la va a sumar a al **registro base**, o sea una dirección virtual se pasa a una dirección física sumándole el registro base. Luego cada memoria generada por el proceso es en una dirección virtual.
 	***physical address = virtual address + base***
 En código seria algo así lo que sucede:
-```
+```c
 v2p(void *vaddr) {
 	if (vaddr<limit)
 		paddr = vaddr+base;
@@ -771,7 +773,7 @@ Ejemplo: examinemos un bloque de 20bytes al que ptr apunta. Imaginemos que se ll
 ![ScreenShot](Imagenes/ejemplo_allocated_1.png)
 
 El header minimamente va a contener el tamaño de la region asignada (en este caso es 20), puede contener otros punteros y va a contener un **numero magico** que lo usamos para chequear que la memoria no fue alterada. Supongamos que header es de la siguiente forma:
-```
+```c
 typedef struct {
 int size;
 int magic;
@@ -783,7 +785,7 @@ Este ejemplo va a ser algo como lo siguiente:
 ![ScreenShot](Imagenes/ejemplo_allocated_2.png)
 
 Cuando se llama a free(ptr) la libreria usa simple pointer arithmetic para encontrar donde comienza el header.
-```
+```c
 void free(void *ptr) {
 header_t *hptr = (header_t *) ptr - 1;
 ...
@@ -872,4 +874,185 @@ First-fit encuentra el mismo chunk que worst-fit pero con la diferencia que no t
 
 ---
 
+## Paginacion
+Para resolver los problemas de espacios de memoria hicimos un primer acercamiento con segmentacion pero esa técnica tenia la gran desventaja de sufrir de fragmentacion al dividir los espacios en tamaños variables. Tiempo mas tarde surge otra idea la cual soluciona en gran medida los problema anteriores y esta es ***paginacion*** (en memoria virtual). Esta se basa en dividir el espacio de memoria en pedazos de tamaño fijo. En lugar de dividir el espacio de memoria de un proceso en un numero de segmentos con tamaño variable (code, stack, heap, etc) lo dividimos en **unidades de tamaño fijo conocidas como paginas**. 
+### Paginacion y segmentación
+Paginacion es básicamente segmentación con algunas restricciones:
+- El bounds va a ser siempre del tamaño de los bits que sobran en la dirección
+- la base va a ser un múltiplo del tamaño en bits que sobran en la dirección
+- Y luego algunos cambios
+### Ventajas
+Paginacion tiene varias ventajas respecto a otros métodos para administrar la memoria, la mas importante es la ***flexibilidad*** ya que el SO va a ser capaz de soportar la abstracción de un espacio de memoria sin importar como el proceso la use, *entonces por ejemplo no vamos a asumir mas sobre la dirección del heap, como el stack crece y demás...*
+Otra importante ventaja es la ***flexibilidad*** que ofrece, por ejemplo cuando el SO quiere ubicar nuestra memoria de 64B en las 8 paginas de memoria física, simplemente debe encontrar 4 paginas libres las cuales normalmente el SO lleva una lista de ellas conocida como la **free list** y simplemente las agarra de acá.
+### Memoria física
+En cuanto a la memoria física, la veremos como un arreglo posiciones de tamaño fijo que llamaremos **page frames**, las cuales a su vez están compuestas por **virtual-memory page** (o sea las posiciones)
+### Ejemplo
+Veamos un ejemplo de paginacion donde tenemos 64B de memoria las cuales están divididas en 4 paginas de 16B cada una (paginas virtuales 0, 1, 2 y 3). La memoria física es mas grande
 
+![ScreenShot](Imagenes/paginacion_ejemplo_1.png)
+
+Ahora veamos otro ejemplo pero sobre la memoria física. En este caso tenemos 8 pages frames haciendo un total de 128B de memoria física. Como se puede ver, las paginas virtuales fueron puestas en posiciones de memoria física no contiguas, ademas de que la memoria física tiene un espacio reservado para el SO.
+
+![ScreenShot](Imagenes/paginacion_ejemplo_2.png)
+
+### Page table
+Para guardar donde cada pagina virtual de la memoria esta en la memoria guardada en la memoria física, los SO suelen tener una estructura de información por proceso (o per-process data structure) conocida como **page table**. El objetivo de las page table es guardar las ***address translations*** *(o traducción de direcciones)* para cada pagina virtual del espacio de memoria dejándonos así saber donde reside cada pagina en la memoria.
+**Guarda las traducciones de memoria virtual a memoria física. Hay una de estas tablas por proceso y al ser flexibles los SO modernos pueden manejarlas.**
+#### Veamos algún ejemplo
+Siguiendo el ejemplo anterior, la tabla de direcciones seria de la siguiente forma:
+```js
+(Virtual page 0 -> Physical Frame 3)
+(VP1 -> PF7)
+(VP2 -> PF5)
+(VP3 -> PF2)
+```
+Es importante recordar que esta tabla es una estructura de información por proceso (per-process data structure) por lo que si otro proceso quiere correr el SO deberá manejar otra page table para ese proceso
+### Translate o traducir
+Ahora imaginemos que el proceso con 64B quiere hacer un acceso a memoria, lo que seria algo del estilo:
+``` js
+movl <virtual address>, %eax
+```
+Específicamente prestemosle atención a la carga de información de **< virtual address >** al registro **%eax**.
+Para poder traducir esta dirección virtual que el proceso genero es necesario dividir en dos componente:
+- **virtual page number (VPN)**
+- **offset**
+#### Ejemplo
+Sigamos con el ejemplo de 64B, entonces como 2⁶=64 solo necesitamos 6bits para representar la dirección virtual quedando de la siguiente forma:
+
+![ScreenShot](Imagenes/translate_1.png)
+
+Donde V5 es el mas significativo.
+Luego como sabemos que las paginas son de tamaño de 16bits podemos dividir la dirección virtual de la siguiente manera:
+
+![ScreenShot](Imagenes/translate_2.png)
+
+Como el tamaño de las paginas es de 16bits en un espacio de memoria de 64bits necesitamos una manera de seleccionar una de las 4 paginas disponibles, para ello es que están los 2bits del VPN mientras que los restantes (offset) dicen en que byte de la pagina estamos interesados.
+#### Ejemplo 2
+Cuando un proceso genera una dirección virtual, el SO y el hardware deben trabajar en conjunto para traducir esa dirección en una física. Por ejemplo ahora al ejemplo anterior demosle una dirección virtual numérica, por ejemplo queremos hacer:
+```js
+movl 21, %eax
+```
+Entonces 21 se transforma a 010101 en binario, entonces podemos ver como esta dirección virtual se pone como una virtual page number y su offset:
+
+![ScreenShot](Imagenes/translate_3.png)
+
+Entonces, vemos que la **dirección virtual se coloca en la posición 5** (0101, offset) **del byte de la pagina 01** (primer lugar, vpn) entonces ahora podemos indexear la page table para descubrir la dirección física de la pagina 01.
+Si vemos la tabla que teníamos antes (porque estamos siguiendo ese ejemplo) nos daremos cuenta que su **physical frame number** (PFN, o también llamado phyisical page number, PPN) **es 7** (111 en binario). Entonces ahora podemos traducir la dirección virtual simplemente **reemplazando el VPN por el PFN:**
+
+![ScreenShot](Imagenes/translate_4.png)
+
+Notemos que el offset permanece igual porque solo nos dice que byte de la pagina queremos.
+Entonces nuestra dirección final es: 1110101 (117 en decimal) y exactamente donde queremos cargar y luego buscar la información.
+
+### Ejemplo 3
+Veamos un ejemplo de esquema de paginacion lineal de 32bits con paginas de 4KB.
+Entonces primero veamos cuantos bits se necesitan para forman 4KB:
+	4KB = 4 x KB = 4 x 2¹⁰ = 2² x 2¹⁰ = 2¹²
+	Entonces necesitamos 12bits para formar los 4, por ende estos 12bits van desde el bit menos significativo hasta el bit12
+	------------------------
+	01001100011011101100101001111111
+	                    °°°°° °°°°°°°
+	Por lo tanto nuestro esquema sera el siguiente:
+	Esquema (20, 12) => 20 bits para indicar la pagina y 12 para el desplazamiento
+Cada PTE (Page Table Entry) tiene 32bits con 1byte=8bits entonces cada PTE tiene 4bytes.
+Si cada entrada de la Page Table tiene 4bytes y tengo 1048576 entradas ¿Cuanto ocupa page table entera? Ocupara 4MB
+#### Virtudes
+- Paginacion es absolutamente versátil
+#### Problemas
+- Tremendamente pesado en consumo de memoria, entonces las page table estan en RAM porque no pueden entrar en el CPU (Cap 19 TLB)
+- Duplica la cantidad de accesos a memoria (Cap 20 Smaller Tables)
+
+#### Ejemplo 4
+Al ejecutar un programa que tiene el siguiente rastro de memoria virtual:
+0, 5, 128, 8, 10, 256, 13
+Cada acceso a memoria => Otro acceso a la page table
+
+### ¿Donde se almacenan las page table?
+Las page table pueden ser muy largas, *por ejemplo imaginemos un espacio de memoria de 32bits con 4KB paginas. La dirección virtual se divide en 20bits para el VPN y 12bits para el offset)*
+*Notemos que 20bits de VPN implican que hay 2²⁰ traducciones que el SO debe manejar para cada proceso.. Asumiendo que necesitamos 4bytes por cada entrada de la page table(**PTE, Page Table Entry**) para guardar la traducción y demás cosas tendríamos la inmensa cantidad de 4MB de memoria necesaria para cada page table lo cual es mucho incluso para hoy día ya que si por ejemplo tuviéramos 100 procesos necesitaríamos 400MB para manejar solo las traducciones.*
+Entonces como las tablas son muy grandes tampoco se pueden guardar en la CPU. Se guardan en algún lugar de la memoria, por ahora asumamos que viven en la memoria física para luego llegar a la conclusión que viven en la memoria virtual.
+
+### ¿Que hay en la page table?
+Hablemos un poco de la organización de la page table, esta es solo una estructura que es usada para mapear direcciones virtuales (en realidad mapea **virtual page numbers**) con direcciones físicas (**physical frame numbers**). Entonces en cierta forma podemos pensar que es un array
+#### Bits
+Hay ciertos bits especiales que se almacenan, entre ellos los mas destacables son:
+- Valid bit: indica si la traducción es valida
+- Protection bits: indica si la pagina puede ser leída, escrita o ejecutada. (*Si no esta permitido hacer algo de esto se generara un trap*)
+- Present bit: Indica si la pagina esta en memoria física o virtual (*por ejemplo, si fue swapped out*)
+- Dirty bit: Indica si la pagina fue modifica desde que llego a memoria
+- Reference bit: usado para hacer un seguimiento sobre si la pagina fue accedida recientemente, es útil para determinar las paginas populares y mantenerlas en memoria. (*Tambien se lo conoce como accessed bit*)
+- Muchos otros mas
+Entre ellos el que parece mas complejo es el valid bit, veamos un ejemplo de este:
+*Cuando un programa inicia tiene code y heap al final de su espacio de memoria y el stack al comienzo. Todo el espacio sin usar entre medio va a ser marcado como **invalid** y si el proceso trata de acceder se genera una trap y se termina el proceso. Entonces simplemente marcando paginas sin usar como invalidas ahorramos memoria*
+Ejemplo de los bits importantes en x86:
+
+![ScreenShot](Imagenes/bits_importantes.png)
+
+El ejemplo contiene un present bit (P), read/write bit (R/W), user/supervisor bit (U/S) determina si los procesos user-mode pueden acceder a la pagina, algunos bits de (PWT, PCD, PAT y G) que determinan como el cache del hardware funciona para las paginas, un bit de acceso (A), un dirty bit (D) y un page frame number (PFN)
+Notemos que en el ejemplo no tenemos un bit de valid y uno de present, porque están los dos juntos en el present bit (P). Si P=1 significa que la pagina es present y valid. Si P=0 significa que la pagina no es valid o no es present (las dos no pueden no ser).
+
+### Paginacion es lenta
+La paginacion puede ralentizar, por ejemplo:
+```js
+movl 21, %eax
+```
+que a simple vista parece una simple instrucción puede ralentizar mucho.
+Veamos que es lo que sucede con esta instrucción:
+**Primero debemos traducir su dirección virtual (21) a dirección física** (117). Antes de buscar la dirección de la dirección 117 el SO primero debe buscar la entrada correcta de la page table de las page tables del proceso y realizar la traducción y luego cargar la información desde la memoria física. *Para poder hacer esto el hardware debe saber donde esta la page table del proceso que corre. Asumamos que solo tenemos una page table. Para encontrar la PTE(page table entry) el hardware debe realizar las siguientes funciones:*
+```js
+VPN = (VirtualAddress & VPN_MASK) >> SHIFT
+PTEaddr = PageTableBaseRegister + (VPN * sizeof(PTE))
+```
+*En nuestro ejemplo VPN_MASK debería ser 0x30 (110000 en binario) que toma los VPN bits de la dirección virtual. Luego SHIFT es 4 debido a que debe ser la misma cantidad de bits que el offset de modo que mueve los bits de VPN hacia abajo para formar el nro de pagina virtual correcto. Por ejemplo con el nro virtual 21 (010101) el masking transforma este valor en 010000 y luego el shift lo transforma en 01 lo que quiere decir que es la page 1*
+Una vez que conocemos la dirección de memoria física el hardware puede buscar la PTE de la memoria, extraer el PFN (physical frame number) y concatenarlo con el offset de la dirección virtual para formar la dirección física
+```js
+offset = VirtualAddress & OFFSET_MASK
+PhysAddr = (PFN << SHIFT) | offset
+```
+
+![ScreenShot](Imagenes/protocol_memory.png)
+
+Entonces podemos decir que las referencias a memoria tienen dos principales problemas:
+- ***Son lentas***
+- ***Consumen mucha memoria***
+### Traza de memoria
+Veamos un ejemplo sencillo mostrando todos los accesos a memoria que ocurren cuando se usa paginacion. Es un código largo llamado array.c que esta en el libro pero la parte que nos interesa es la siguiente:
+```c
+int array[1000];
+...
+for (i=0; i<1000; i++) {
+	array[i]=0;
+}
+```
+Luego compilamos y corremos con los siguientes comandos:
+```js
+prompt> gcc -o array array.c -Wall -O
+prompt> ./array
+```
+Obviamente asumimos que usamos objdump para ver las instrucciones assembly, estas son las que nos interesan:
+```js
+1024 movl $0x0, (%edi, %eax, 4)
+1028 incl %eax
+1032 cmpl $0x03e8, %eax
+1036 jne 1024
+```
+Lo que hace este código es lo siguiente:
+*La primera instrucción mueve el valor 0 hacia la dirección de memoria virtual del arreglo, dirección que esta dada por los contenidos de %edi sumados a los de %eax multiplicado 4. Notemos que %edi contiene la dirección base del arreglo, mientras que %eax contiene el el indice i del array. Multiplicamos por 4 debido a que el arreglo es un arreglo de entero y los enteros son de 4ytes*
+*La segunda instrucción incrementa el valor del indice del arreglo guardado en %eax.*
+*La tercera instrucción compara los contenidos de %eax con 0x03e8 (o 1000 en decimal). Si la comparación muestra que los dos valores no son iguales (que es lo que jne verifica) la cuarta instrucción hace que saltemos de nuevo a la posición 1024 ingresando otra vez al loop*
+#### Entendiendo los accesos a memoria
+Para entender los accesos a memoria primero debemos asumir ciertas cosas. Primero asumamos que tenemos un espacio de memoria de 64KB y que las paginas son de 1KB. Asumamos también que tenemos una page table lineal (o sea un array) que esta ubicada en la dirección 1024(1KB) de la memoria física.
+Entonces como el tamaño de las paginas es de 1KB, la dirección virtual de 1024 se ubica en la segunda pagina del espacio virtual (VPN=1, ya que la 0 es la primera seria desde 0 hasta 1023). Luego asumamos que esta pagina virtual mapea al frame 4 físico, o sea (VPN 1 -> PFN 4).
+Luego esta el arreglo en si. Su tamaño es de 4000 bytes(1000 int) y vamos a asumir que esta en la posiciones virtual 40000 hasta 44000 (sin incluir el ultimo byte). Las paginas virtuales para el array son VPN=39, VPN=40, VPN=41, VPN=42. Luego asumamos el mapeo en direcciones fisicas para el array: (VPN 39 -> PFN 7), (VPN 40 -> PFN 8), (VPN 41 -> PFN 9), (VPN 42 -> PFN 10).
+Ahora estamos listos para correr el programa. Cuando lo haga cada instrucción buscara generar dos referencias a memoria:
+- Una a la page table para encontrar el physical frame donde reside la instrucción y otra a la instrucción en si.
+- Ademas hay una referencia a memoria explicita debido al uso de mov ya que este añade acceso a la page table primero (para traducir la dirección virtual a física) y luego hacia el arreglo en si.
+Seria algo así:
+
+![ScreenShot](Imagenes/acceso_a_memoria_ejemplo.png)
+
+El proceso entero para las primeras 5 iteraciones del loop están descritas en el gráfico.
+La parte mas baja del gráfico muestras las referencias a instrucciones de memoria en el *eje Y* en blanco (con las direcciones virtuales a la izquierda y las direcciones físicas a la derecha).
+El gráfico del medio muestra los accesos al arreglo en gris claro(virtual izq, física der).
+El gráfico de arriba muestra los accesos a memoria del page table en gris oscuro (solo memoria física porque las page table de este ejemplo solo residen en memoria física).
+El eje X de la traza entera muestra los accesos a memoria a lo largo de las 5 iteraciones del loop, hay 10 accesos a memoria por loop que incluyen las 4 búsquedas de instrucciones, una actualización de memoria explicita y los 5 accesos a las page table para traducir esas 4 búsquedas y la actualización de memoria
