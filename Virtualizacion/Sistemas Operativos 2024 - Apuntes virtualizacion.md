@@ -1319,14 +1319,18 @@ Notemos que si el tamaño de la pagina fuera mayor, por ejemplo 32bytes en lugar
 Ademas si nuestro programa volviera a acceder al array luego de haber terminado, tendríamos TLB hit porque las traducciones estarían temporalmente en la cache.
 
 ### Cache
+Sabemos que los **store** tienen **localidad espacial** y que los **ifetch** tiene **localidad temporal**. Para aprovechar dichas localidades de los accesos a memoria existe la cache y en especifico el TLB, haciendo que las traducciones de direcciones virtuales a fisicas sean mas rapidas.
+
 Caching es una de las técnicas mas fundamentales para mejorar el rendimiento. La idea es tomar ventaja de la "localidad" de una instrucción. Hay dos tipos de localidad:
-- Localidad temporal: Una instrucción o información que fue recientemente accedida podría volver a ser accedida en el futuro, por ejemplo en el caso de loops.
-- Localidad espacial: Si un programa accedió a una dirección **X**, probablemente pronto acceda a direcciones cercanas a **X**
+- **Localidad temporal**: Una instrucción o información que fue recientemente accedida podría volver a ser accedida en el futuro, por ejemplo en el caso de loops.
+- **Localidad espacial**: Si un programa accedió a una dirección **X**, probablemente pronto acceda a direcciones cercanas a **X**
 
 ### ¿Quien maneja los TLB miss?
 En años anteriores el hardware era el único encargado de manejar las TLB miss. Para ello tenia que saber exactamente donde estaban las page table en memoria y su formato.
 
-En arquitecturas modernas tenemos lo que se conoce como **software-managed TLB**, cuando ocurre un TLB miss el hardware hace una expecion pero es algo distinta a las que vimos con procesos ya que esta hecha especialmente para los TLB miss
+En arquitecturas modernas tenemos lo que se conoce como **software-managed TLB**, cuando ocurre un TLB miss el hardware hace una expecion pero es algo distinta a las que vimos con procesos ya que esta hecha especialmente para los TLB miss.
+
+Hoy en dia es importantisimo manejar los TLB miss lo mejor posible, se intenta que haya la menor cantidad posibles de estos ya que tener uno de estos genera un gran impacto en el rendimiento del procesador. Accediendo a la memoria de manera secuencial permite tener menos TLB miss (localidad espacial)
 
 #### Ventajas de software-managed TLB
 - Flexibilidad: el SO puede usar cualquier estructura de datos que quiera para implementar la page table sin necesitar del hardware.
@@ -1342,6 +1346,10 @@ Los "other bits" contienen cosas como el **valid bit, protection bit, address-sp
 
 ### TLB y los context switch
 Nuevos problemas aparecen cuando cambiamos entre procesos. TLB contiene traducciones de memoria virtual a física las cuales **solo son validas para el proceso actual**. Si queremos cambiar de un proceso a otro el hardware y el OS deben asegurarse que el nuevo proceso no use las traducciones del anterior.
+
+***Cuando hacemos un context switch es importante entender que el valid bit se pone en 0, por eso vemos el porque es caro cambiar de contexto, se nos llena la TLB de miss.*** *(tengo una TLB por core)*
+
+Para evitar invalidar toda la TLB existe el ASID.
 #### Ejemplo
 Cuando un proceso P1 esta corriendo asume que TLB esta haciendo "**caching**" (*o sea esta poniendo en cache*) las traducciones que son validas.
 

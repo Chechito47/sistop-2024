@@ -12,6 +12,7 @@
 | b        | stack (direccion de memoria)                  |
 | *b       | heap (contenido de la variable)               |
 | return s | stack                                         |
+
 Si iniciamos un arreglo `int a[N] = 0` se inicia en el bss ya que aca se almacenan las variable globales sin inicializar (o sea con 0)
 
 ![ScreenShot](Imagenes_practico_ram/ej02_ram.png)
@@ -43,6 +44,7 @@ int * a = malloc(16);
 a[15] = 42
 ```
 Reserva 16bytes y los enteros suelen ocupar 4. La forma correcta seria:
+
 `int *a = malloc(sizeof(int)*16));`
 
 ![ScreenShot](Imagenes_practico_ram/ej03_ram.png)
@@ -67,6 +69,7 @@ Reserva 16bytes y los enteros suelen ocupar 4. La forma correcta seria:
 13: retq
 ```
 Notemos que se lee de izq a derecha (xq por ej con la primer linea no puedo cargar el valor ebx a un registro que se llame 128)
+
 El programa hace lo siguiente:
 - Primero carga el valor 128 en el registro ebx (indico con un $ que es un nro y con un % que es un registro)
 - Segundo leo la direccion de memoria ebx y lo que hay ahi lo copio hacia eax
@@ -76,6 +79,7 @@ El programa hace lo siguiente:
 
 Notemos que el registro base es 4096 y el bounds es 256
 Luego la secuencia de accesos a memoria es la siguiente (hacemos memoria fisica + memoria virtual):
+
 - 4096 + 0 = 4096(por ser registro base + 1ra direccion virtual)
 - 4096 + 5 = 4101 (base + dv) ; 4096 + 128 = 4224 (base+llamada del registro)
 - 4096 + 8 = 4104 (base + dv) 
@@ -86,6 +90,7 @@ Luego la secuencia de accesos a memoria es la siguiente (hacemos memoria fisica 
 ![ScreenShot](Imagenes_practico_ram/ej09_ram.png)
 
 Primero recordemos como son los ajustes:
+
 - First fit: Devuelve el primer chunk con memoria disponible que pueda satisfacer la solicitud.
 - Best fit: Primero busca todos los chunks de memoria con tamaño mayor al de la peticion y devuelve el de menor tamaño entre ellos
 - Worst fit: Devuelve el chunk de memoria mas grande posible con el objetivo de dejar solo chunks grandes de memoria
@@ -203,7 +208,9 @@ Vemos que hay 16bits
 
 Ahora veamos el tema de los bits de redireccionamiento:
 Nuestro tamaño de pagina es de 4KiB, tenemos que ver cuantos bits nos hacen falta para formarlo:
+
 `4KiB = KiB * 4 = 1024 * 4 = 2¹⁰ * 2² = 2¹²`
+
 Entonces vemos que nos hacen falta 12bits que estos son de redireccionamiento, osea de offtset (van del menos significativo al mas significativo). Luego los otros bits restantes son de VPN (en este caso seria 16-12 = 4). Por lo tanto tenemos:
 
 **a)**
@@ -426,9 +433,11 @@ Tenemos direcciones virtuales de 32bits, direcciones fisicas de 32bits. 10 bits 
 ```
 
 ![ScreenShot](Imagenes_practico_ram/ej15_ram.png)
+
 No se puede mapear nunca toda la memoria en casi ningun sistema porque hay cierta parte de la memoria que esta reservada para si mismo.
 
 ![ScreenShot](Imagenes_practico_ram/ej16_ram.png)
+
 Agregando 4bits a las direcciones fisicas. 
 
 ![ScreenShot](Imagenes_practico_ram/ej17_ram.png)
@@ -472,6 +481,7 @@ idxpagetable = 00 0000 0000 => 0
 offset       = 0000 0000 0000
 Entonces vemos que apunta a la ultima entrada la cual a su vez apunta a la base del page directory
 
+b)
 0xFFFE00000
 1111 1111 1111 1110 0000 0000 0000 0000
 idxpage      = 1111 1111 11 => 1023
@@ -479,6 +489,7 @@ idxpagetable = 11 1110 0000 => 513
 offset       = 0000 0000 0000
 Entonces vemos que apunta a la ultima entrada de la page de otra page table, osea al comienzo de la page table 513
 
+c)
 0xFFFFF000
 1111 1111 1111 1111 1111 0000 0000 0000
 idxpage      = 1111 1111 11

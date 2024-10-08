@@ -2,6 +2,7 @@
 ![ScreenShot](Imagenes_practico_cpu/ej01_cpu.png)
 
 Analicemos las lineas:
+
 1. Hay un solo proceso corriendo en la CPU. Notemos que Wall > cputime porque debe haber perdida de tiempo en los context switch
 2. Hay dos procesos corriendo. Walltime > cputime. Como el tiempo siguie siendo muy similar a cuando habia un solo core debe haber al menos dos cores.
 3. Un solo proceso. Walltime > cputime. Tarda mas de Walltime porque debe haber otros procesos ademas de este corriendo en la CPU, por eso el cputime es el mismo.
@@ -11,6 +12,7 @@ Analicemos las lineas:
 7. Cuatro procesos corriendo. Nuevamente debe haber procesos compitiendo y por eso el cputime es siempre el mismo.
 
 Respondamos a las preguntas:
+
 - **a)** El sistema tiee 2 nucleos.
 - **b)** El cputime es menor al walltime porque es la suma del tiempo que corre en cpu, por este casi siempre es menor al walltime. Ademas de que probablementte haya context switch en nuestro programa.
 
@@ -21,13 +23,17 @@ El SO calcula el cputime sumando todo el tiempo que paso en cada nucleo. Por end
 ![ScreenShot](Imagenes_practico_cpu/ej03_cpu.png)
 
 **user<real** (cpu<wall): Porque pueden haber context switch o cambios de proceso
+
 **user=real**: Se ejecuta enteramente el proceso sin context switch en medio
+
 **user>real**: Porque mi proceso se ejecuta en varios hilos o nucleos y hace que yo espere menos tiempo pasando mas tiempo en la cpu
 
 ![ScreenShot](Imagenes_practico_cpu/ej04_cpu.png)
 
 a) Vale 100 porque el fork hace una copia exacta de los fd
+
 b) Una vez creados no se interfieren entre si salvo que usemos execvp, por lo tanto no pasaria nada
+
 c) Seguiria todo bien porque se respaldan los valores al hacer trap y return from trap
 
 ![ScreenShot](Imagenes_practico_cpu/ej05_cpu.png)
@@ -44,9 +50,12 @@ printf("a\n");   //8procesos + 7a = 15a
 ```
 
 Notar que solo imprimo con los printf.
+
 A los roks duplican su cantidad con cada iteracion y a eso le tengo sumar el nro anterior de a's que hay en los prints.
+
 Ahora si generalizamos para n fork tendrimos lo siguiente:
-f(n) = (2^n)-1 donde consideramos como n los prints
+
+`f(n) = (2^n)-1` donde consideramos como n los prints
 
 ![ScreenShot](Imagenes_practico_cpu/ej06_cpu.png)
 
@@ -75,6 +84,7 @@ Este programa lo que hace es llenar nuestra computadora de procesos que nunca te
 ![ScreenShot](Imagenes_practico_cpu/ej10b_cpu.png)
 
 Supongamos que quitamos una de las flechas:
+
 - **I/O: done**: Los procesos que requieren de Input o Output no se ejecutarian nunca o tendrian que pasar directamente a running
 - **I/O: initiate**: Cuando un proceso necesite de un I/O no se cambia a blocked, sino que se queda en running esperando hasta que reciba lo que esperaba.
 - **Scheduled**: Los procesos nunca pasarian de ready a running, basicamente el ready desaparece y solo tendriamos blocked y running
@@ -122,12 +132,15 @@ Primero decido cual atender y debo respetar mi politica. Decido que sea en orden
 | 0   | 10  | 20  | 30  | 40  | 50  |
 | --- | --- | --- | --- | --- | --- |
 | A   | A   | A   | B   | B   | C   |
+
 SJB(Shortest Job First)
+
 Atiendo al que tarda menos tiempo primero
 
 | 0   | 10  | 20  | 30  | 40  | 50  |
 | --- | --- | --- | --- | --- | --- |
 | C   | B   | B   | A   | A   | A   |
+
 Ahora recordemos que
 
 TurnAroundtime = Es el tiempo que tarda desde que empezo su ejecucion hasta que termino
@@ -170,12 +183,17 @@ Hay 3 procesos, vemos que llegan en distintos tiempos y tienen distintos tiempos
 | Running | B   | B   | B   | A   | C   | A   | A   | A   |
 | Arribo  | B   |     | A   |     | C   |     |     |     |
 | Ready   |     |     | A   |     | A   |     |     |     |
+
 **Tabla de politicas:**
+
 Recordemos que es cada uno de estos tiempos:
 
 **Tfirstrun:** Cuanto tarda en ser ejeutado por primera vez
+
 **Tcompletition:** Cuanto tiempo total tarda en ser terminado
+
 **Tturnaround:** Cuanto tiempo tarda en terminar desde que fue ejecutado por primera vez
+
 **Tresponse:** Es el tiempo que tarda desde que llega hasta que es ejecutado por primera vez
 
 | Proceso | Tarrival | TCPU | Tfirstrun | Tcompletition | Tturnaround | Tresponse |
@@ -183,6 +201,7 @@ Recordemos que es cada uno de estos tiempos:
 | A       | 2        | 4    | 3         | 7             | 4           | 1         |
 | B       | 0        | 3    | 0         | 2             | 2           | 0         |
 | C       | 4        | 1    | 4         | 4             | 0           | 0         |
+
 ***RR(Round Robin)***
 
 | Tiempo  | 0   | 1   | 2   | 3   | 4    | 5   | 6   | 7   |
@@ -190,6 +209,7 @@ Recordemos que es cada uno de estos tiempos:
 | Running | B   | B   | A   | A   | C    | B   | A   | A   |
 | Arrival | B   |     | A   |     | C    |     |     |     |
 | Ready   |     |     | B   | B   | A, B |     |     |     |
+
 En el tiempo 4 decido como politica que voy a atender a los procesos que entran. Luego decidio ejecutar el que hace mas tiempo no es ejecutado.
 
 **Tabla de politicas:**
@@ -203,6 +223,7 @@ En el tiempo 4 decido como politica que voy a atender a los procesos que entran.
 ![ScreenShot](Imagenes_practico_cpu/ej15_cpu.png)
 
 Recordemos que batch es cuando podemos tener procesos que no sean atendidos por un largo tiempo.
+
 Las interactivas son las que cortan por quanto.
 
 |      | Batch/interactive | ¿Necesita saber Tcpu? |
@@ -227,12 +248,15 @@ Notemos que tenemos un RR con Quanto=2
 |    Arrival    |  A  |  C  |  B   |     |      |      | C   |     |     |     | A   |     |     |     |      | C   |      | B    | A   |     |     | C   |     |     |     |     |     |
 |     Ready     |     |  C  | A, B |  B  |      |      | C   | C   | B   | B   | A   | A   | B   | B   |      | C   |      | B    | A   | B   |     | C   | C   | C   |     |     |     |
 |   Finished    |     |     |      |     |      |      |     |     |     |     |     |     |     |     |      |     |      |      |     |     | A   |     |     |     | B   |     | C   |
+
 En el tiempo 2 tengo que decidir la politca. Decido que quien haya estado esperando por mas tiempo va a ser el proximo en ejecutarse (comparo sus arribos). Si ambos llevan el mismo tiempo decido que sea por PID (orden alfabetico).
+
 Podria haber definido algo mejor, como por ejemplo evitar hacer context switch
 
 ![ScreenShot](Imagenes_practico_cpu/ej17_cpu.png)
 
 Recordemos que la MLFQ se basa en una cola de prioridades, mientras mas alta mejor, mientras mas baja mas batchero es el proceso. En este caso si ejecuta un quanto baja, si ejecuta 2 baja, si ejecuta 4 baja y luego baja si ejecuta 8. En este caso ninguno va a ejecutar 8. Notemos ademas que al referirnos a ejecutar nos referimos que ejeucta esa cantidad de veces en ese cuento para bajar. Por ejemplo para bajar del Q1 al Q2 debe ejecutar 2 eveces. Del Q2 al Q3 4 veces. Por lo tanto vemos que en este caso ninguno siquiera va llegar al Q3 porque para ello necesitaria minimo de 1+2+4 = 7 tiempos de cpu + los que vaya a seguir corriendo y el mas lasrgo que tenemos tiene justo 7 y por eso cuando tendria que bajar va a terminar.
+
 Notar que siempre tiene prioridad para ejecutarse lo que esta mas arriba. Luego el orden de prioridad es por PID (abecedario)
 
 Supongo que tendremos 22 tiempos como minimo
@@ -244,10 +268,15 @@ Supongo que tendremos 22 tiempos como minimo
 | Q2     |         |         |         |           |         |            | A         | A       | A          | A         | A         | AC       | AC       | AC      | AC      | ***A***CE | ***A***CE | ***A***CE | ***A***CE | ***C***E | ***E*** |     |
 | Q3     |         |         |         |           |         |            |           |         |            |           |           |          |          |         |         |           |           |           |           |          |         |     |
 
+
 Marco con negrita cual se esta ejecutando. 
+
 En el tiempo 9 B desaparece porque ya termino (ultima ejecucion en 8)
+
 En tiempo 13 D termino. (ultima ejecucion en 12)
+
 En el tiempo 19 A ya termino. (ultima ejecucion en 18)
+
 En el tiempo 21 E ya termino (ultima ejecucion en 20)
 
 ![ScreenShot](Imagenes_practico_cpu/ej18_cpu.png)

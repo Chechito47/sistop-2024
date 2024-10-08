@@ -1,1 +1,3 @@
-Notas, comandos y curiosidades de la materia sistemas operativos 2024
+Apuntes de la materia Sistemas Operativos.
+
+Notas, comandos, curiosidades y practico.

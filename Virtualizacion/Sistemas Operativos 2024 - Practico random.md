@@ -34,3 +34,24 @@ int main(void) {
 Si pongo una variable como registro no esta en memoria sino que esta en el procesador.
 El define lo que hace es sustituir el texto por el valor que le dimos
 Si hago una variable global y la inicializo en 0 por mas grande que sea va a ocupar poco espacio y se almacena en el segmento BSS. Si la inicializo en 1 se guarda en el segmento text y va a ocupar el espacio correspondiente.
+
+### TLB
+¿Que pasa si en vez de usar un esquema (4,4) uso un esquema (2,6)? O sea si uso 2bits para marco de pagina y 6bits para offset.
+
+En ese caso, tendriamos menos TLB miss, ya que en una pagina podriamos tener mas elementos.
+
+Por ejemplo:
+
+Si tenemos paginas de 4k, con 512 entradas en la TLB ¿Cual es el encubrimiento de la TLB?
+
+```js
+512*4KiB = 2048KiB = 2MiB
+```
+
+¿Y si las paginas son de 4MiB?
+
+```js
+512*4MiB = 2048MiB = 2GiB
+```
+
+***AutoHugePage*** permite 
