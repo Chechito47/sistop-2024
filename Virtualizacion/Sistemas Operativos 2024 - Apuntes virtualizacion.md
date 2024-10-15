@@ -1412,3 +1412,205 @@ La capacidad de traducción que da el VPN es de 24bits siendo este el PFM(physic
 ![ScreenShot](Imagenes/TLB_ejemplo_2.png)
 
 Tambien hay otras cosas para notar ya que hay algunos bits interesantes. Podemos ver un **global bit (G)** que es usado por paginas que son globalmente compartidas, por lo que si esta en 1 ASID es ignorado. También vemos los 8bit de **ASID**. Vemos 3 bits de **coherence (C)** que determina como una pagina es cacheada por el hardware. Un **dirty bit (D)**, un **valid bit (V)**. Tambien hay un **page mask (que no se muestra)** que soporta paginas de multiples tamaños. Finalmente hay algunos de los 64bits que no son usados (están en gris).
+
+### CR3
+El CR3 apunta al registro base de la page table. En un context switch el CR3 cambia. Me dice cual es la pagina fisica que contiene la tabla de paginas.
+
+Cuando se realiza un cambio de CR3 hay que tener cuidado, el user space es el que cambia pero el kernel space debe quedar igual. Caso contrario voy a estar ejecutando otra cosa que no quiero.
+
+El kernel debe estar inamovible, todos los procesos lo tienen en el mismo lugar.
+
+## ***Paginacion: tablas mas pequeñas***
+Ahora vamos a ver el segundo problema que trae paginacion, ***las tablas son muy grandes y eso consume mucha memoria.***
+
+En nuestras tablas lineales se harían muy grandes, sigamos con el ejemplo anterior con un espacio de direcciones de 32bits (2³²) con 4KiB (2¹²) paginas y 4byte page-table entry. Un espacio de direcciones así tendría aproximadamente un millón de paginas virtuales (2³²/2^¹²) multiplicado por el tamaño de entrada de la pagina por lo que tendríamos una page table de 4MiB. 
+
+Pero notemos que usualmente tenemos una page table por cada proceso, o sea 4MiB por proceso si seguimos el ejemplo, por lo que tendríamos cientos de MiB de memoria solo para las page table
+### Posible solución: Paginas mas grandes
+Podríamos reducir el tamaño de las page table haciendo uso de paginas de mayor tamaño. Sigamos con el ejemplo de un espacio de direcciones de 32bits pero esta vez asumamos que tenemos paginas de 16KiB. De esta forma tendremos 18bits para el VPN y 14bits para el offset. Por lo tanto tendremos 2¹⁸ entradas (pensando de forma lineal) lo que hace que finalmente tengamos page tables de 1MiB.
+
+Pero esto conlleva un problema grave, mientras mas grandes sean las paginas mayor fragmentacion interna sufriremos.
+### Posible solución: mezclar paginacion con segmentacion
+Por ejemplo, tenemos un espacio de direcciones de 16KiB con paginas de KiB:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_1.png)
+
+Nuestra page table es de la siguiente manera:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_2.png)
+
+Como podemos ver la mayoría de tabla esta sin utilizar, lleno de ***entradas invalidas***.
+
+Nuestra idea de juntar paginacion con segmentacion implica que en lugar de tener una sola page table para todo el proceso tengamos una para cada segmento lógico.
+
+Por ejemplo, supongamos que tenemos 3 page table, una para el code, una para el stack y una para el heap.
+
+En segmentacion teníamos un registro base que nos decía donde estaba ubicado cada segmento en memoria física y un registro limite que nos decía el tamaño de dicho segmento. En nuestra estructura híbrida están pero el registro base lo usaremos para guardar la dirección física de la page table del segmento y el registro limite lo usaremos para indicar el final de la page table (o sea nos dice el valor de la pagina máxima valida del segmento)
+
+#### Ejemplo
+Asumamos que tenemos un espacio virtual de 32bits con paginas de 4KiB y el espacio de direcciones lo dividimos en 4 segmentos de los cuales solo usaremos 3 (para code, heap y stack).
+
+Para determinar a que segmento se refiere una dirección, usamos los 2bits mas significativos. Supongamos que 00 es el que no usamos, 01 el code, 10 el heap y 11 el stack.
+
+Luego nuestra dirección virtual seria de la siguiente forma:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_3.png)
+
+Ahora cada proceso en el sistema tiene 3 page tables asociadas a el. En un context switch estos registros deben ser cambiados para reflejar la ubicación de las page tables del nuevo proceso.
+
+En un TLB miss el hardware usa los segment bits(**SN**) para determinar que registro base y que registro limite usar. Toma la dirección física y la combina con el VPN. O sea hace lo siguiente:
+
+```js
+SN = (VirtualAddress & SEG_MASK) >> SN_SHIFT
+VPN = (VirtualAddress & VPN_MASK) >> VPN_SHIFT
+AddressOfPTE = Base[SN] + (VPN * sizeof(PTE))
+```
+
+Entonces nuestra solución híbrida realiza un importante ahorro de memoria, las paginas sin inicializar entre el stack y el heap ahora no ocupan mas espacio en la page table (ya que las marcamos como no validas). Pero trae consigo el problema heredado de la segmentacion: la fragmentacion.
+
+### Posible solucion: multi level page tables
+En esta solucion transformamos nuestro page table lineal en algo como un árbol (sistemas como x86 usan esto). 
+
+Primero dividimos la page table en espacios iguales, luego si una page de la page table entries (PTEs) es invalida no la ubicamos.
+
+Para saber si una pagina es valida o no (si no es valida contiene no valid pages) usamos una nueva estructura llamada **page directory**.
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_4.png)
+
+En este ejemplo a la izquierda tenemos la page table lineal y a la derecha la multi level page table.
+
+Vemos que la multi level page table marca los lugares donde la page table lineal queda sin usar y los hace desaparecer liberando esa memoria y haciendo un seguimiento de que paginas de la page table están ubicadas con el page directory.
+
+El page directory ahora contiene una entrada por paginas de la page table. Consiste en un numero de ***page directory entries (PDE)*** el cual minimamente esta compuesto por un valid bit y un page frame number (PFN) (es como un PTE). Ojo con el valid bit porque aca si la PDE es valida significa que hay al menos una de las paginas de la page table cuyos entry points es valido. 
+
+#### Beneficios
+Entonces vemos que el beneficio del multi level es que va ubicando la memoria según la cantidad que necesitemos. Ademas si esta bien hecho cada porción de la page table ocupa prácticamente una pagina haciendo que sea muy fácil para el SO manejar la memoria porque solo tiene que agarrar la pagina que sigue ya sea para agrandar o para un nuevo proceso.
+
+Ademas con una estructura multi level agregamos un ***nivel de indireccion (level of indirection)*** que nos permite ubicar las paginas de page table donde queramos. 
+
+#### Problema
+Pero debemos notar los problemas de esto también, en un TLB miss vamos a tener que hacer dos cargas de memoria, una para la page directory y otra para la PTE (es nuestro trade off).
+
+Otro problema es la complejidad, ahora un TLB miss es mucho mas complejo que antes, ya que ahora no solamente debe mirar de manera lineal la page table si no que debe haber varias cosas mas.
+
+### Veamos en detalle como funciona un multi level page table
+Hagamos un ejemplo, supongamos que tenemos un espacio de 16KiB con 64bytes pages por ende tendriamos 14bits para el virtual address space, 8 para el VPN y 6 para el offset.
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_5.png)
+
+En este ejemplo las paginas virtuales 0-1 son para el code, 4-5 para el heap y 254-255 para el stack. El resto no se usan.
+
+Para poder construir una page table de dos niveles para este espacio de direcciones empezamos con nuestra page table lineal llena y la partimos en pedazos. En este ejemplo como tenemos 256 entradas (2⁸), asumimos que cada PTE es de 4bytes y de esta forma nuestra page table es de 1KiB (256x4bytes). Luego como tenemos 64bytes pages, el 1KiB puede ser dividido en 16 64bytes pages, por ende cada page puede almacenar 16PTEs (1KiB=1024/64=16).
+
+Ahora debemos entender como tomar el VPN y usarlo para indexar primero la page directory y luego la page de la page table.
+
+El page directory necesita una entrada por pagina de la page table, en este caso sabemos que tiene 16. Como resultado necesitaremos 4bits de VPN para indexar:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_6.png)
+
+El calculo que hacemos para obtener el page directory es el siguiente:
+
+```js
+ PDEAddr = PageDirBase + (PDIndex * sizeof(PDE))
+```
+
+Examinemos este calculo un poco. Si la page directory es invalid listo, el acceso es invalido. Si el PDE es valido, tenemos que buscar el page table entry(PTE) de la pagina de page table apuntada por esta page directory entry. Para encontrarlo debemos indexar en la porción del page en la que estamos usando los bits restantes del VPN:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_7.png)
+
+Este page table index puede usarse para indexar la page table en si dándonos así la direccion del PTE:
+
+```js
+PTEAddr = (PDE.PFN << SHIFT) + (PTIndex * sizeof(PTE))
+```
+
+#### Ejemplo
+Veamos como se llena un multi level page table. Tenemos la siguiente tabla:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_8.png)
+
+Comencemos con la page directory que esta a la izquierda. Cada page directory entry (PDE) describe algo sobre un page de la page table para el espacio de dirección. En este ejemplo tenemos dos regiones validas (al principio y al final) y mapeos inválidos en medio.
+
+En la pagina física 100 tenemos la primera page de las 16 page table entries de las 16 primeras VPNs en el espacio de direccionamiento.
+
+Esta page de la page table contiene los mapeos de los primeros 16VPNs, en nuestro ejemplo VPNs 0 y 1 son validos (code), 4 y 5 también son validos (heap). Luego el resto de las entradas son invalidas hasta que llegamos a la page table detro de PFN 101 que contiene los mapeos de las ultimas 16VPNs. En nuestro ejemplo VPNs 254 y 255 son validas (stack).
+
+En lugar de ubicar las 16 paginas enteras como se sucedería de manera lineal, gracias al multi level ubicamos solo las que vamos a usar, en este caso 3 : una para la page directory y dos para los chunks de la page table
+
+#### Ejemplo de como hacer una traduccion
+Siguiendo el ejemplo anterior ahora veamos como se haría una traducción.
+
+La siguiente es una dirección que se refiere al byte 0 del VPN 254:
+
+```js
+0x3F80 => 11 1111 1000 0000
+```
+
+Usamos los 4bits mas significativos del VPN para indexar en la page directory. En este caso como esos bits son **1111** entones la entrada es la ultima de la page directory. Esto nos apunta a una pagina valida de la page table ubicada en la direccion 101. Luego cuando usemos los siguientes 4bits del VPN (1110) indexa a la pagina de la page table y obtenemos el PTE buscado. Luego 1110 es la ante ultima entrada de la page y nos indica que la dirección 254 de nuestro espacio virtual esta mapeada a la pagina fisica 55. Luego concatenando PFN=55 (0x37) con el offset=000000 formamos la dirección física deseada y hacemos la petición de memoria:
+
+```js
+ PhysAddr = (PTE.PFN << SHIFT) + offset 
+          = 00 1101 1100 0000 
+          = 0x0DC0.
+```
+
+### Mas de dos niveles
+Generalmente queremos tener multi level de mas de dos niveles. Veamos un ejemplo:
+
+Supongamos que tenemos 30bits de espacio de direccionamiento virtual y paginas de 512bytes. De esta forma nuestra dirección virtual tendria 21bits de virtual page number (VPN) y 9 de offset.
+
+Para determinar cuantos niveles necesitamos en nuestro multi level para hacer que todas las partes de la page table entren en una page empezamos determinando cuantas page tables entries entran en una pagina. Como teníamos 512bytes y asumiendo que nuestro PTE es de 4bytes entrarían 128 PTEs en una pagina por lo que necesitaríamos al menos 7bits significativos:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_9.png)
+
+Notemos que tenemos 14bits en el page directory index entonces como nuestro PDE es de 4bytes es claro que abarca 128 paginas pero nuestro objetivo es hacer que cada parte de la multi level page entre en una page.
+
+Para solucionar ese problema tenemos que construir un poco mas, debemos dividir la page directory en si en varias paginas y luego añadir otra page table por encima de ellos para que apunte a las paginas de la page directory que dividimos. Se puede dividir de la siguiente manera:
+
+![ScreenShot](Imagenes/paginacion_y_segmentacion_ejemplo_10.png)
+
+Ahora cuando indexamos el nivel superior de la page directory usamos los bits mas significativos de la virtual address (PD index 0), este indexeo se usa para buscar la page directory entry de los top-level page directory. Si es valido el segundo nivel de la page directory es consultado combinando el physical frame number (PFN) del top-level PDE con la siguiente parte del VPN (PD index 1). Finalmente si es valido la direccion del PTE puede ser formada usando la page table index combinada con la direccion del segundo nivel del PDE.
+
+### Traducciones: TLB
+Otra vez hacemos uso del control flow algorithm. Lo siguiente describe que es lo que pasa en el hardware (asumiendo que tiene un TLB) en cada referencia a memoria:
+
+```js
+VPN = (VirtualAddress & VPN_MASK) >> SHIFT
+(Success, TlbEntry) = TLB_Lookup(VPN)
+if (Success == True) // TLB Hit
+    if (CanAccess(TlbEntry.ProtectBits) == True)
+		Offset = VirtualAddress & OFFSET_MASK
+		PhysAddr = (TlbEntry.PFN << SHIFT) | Offset
+		Register = AccessMemory(PhysAddr)
+	else
+		RaiseException(PROTECTION_FAULT)
+else // TLB Miss
+	// first, get page directory entry
+	PDIndex = (VPN & PD_MASK) >> PD_SHIFT
+	PDEAddr = PDBR + (PDIndex * sizeof(PDE))
+	PDE = AccessMemory(PDEAddr)
+	if (PDE.Valid == False)
+		RaiseException(SEGMENTATION_FAULT)
+	else
+		// PDE is valid: now fetch PTE from page table
+		PTIndex = (VPN & PT_MASK) >> PT_SHIFT
+		PTEAddr = (PDE.PFN<<SHIFT) + (PTIndex*sizeof(PTE))
+		PTE = AccessMemory(PTEAddr)
+		if (PTE.Valid == False)
+			RaiseException(SEGMENTATION_FAULT)
+		else if (CanAccess(PTE.ProtectBits) == False)
+			RaiseException(PROTECTION_FAULT)
+		else
+			TLB_Insert(VPN, PTE.PFN, PTE.ProtectBits)
+			RetryInstruction()
+```
+
+El hardware primero chequea la TLB hasta que hace un hit, luego la dirección física es formada directamente sin acceder a la page table.
+
+En un TLB miss el hardware debe hacer una busque en multi level. Entonces podemos ver claramente que el costo de tener un multi level page table es tener que hacer dos accesos a memoria mas para buscar la traducción valida.
+
+### Page tables invertidas
+Es una técnica que ahorra todavía mas memoria, en lugar de tener una page table por proceso tenemos una sola la cual tiene una entry por cada pagina fisica del sistema. Esta entrada nos dice que proceso esta usando esta pagina y que pagina virtual de ese proceso mapea a esta pagina física.
+
+### Swappear page tables al disco
+Algunos sistemas ubican sus page tables en la memoria virtual del kernel lo cual permite al sistema swappearla algunas de esas page tables al disco en caso de que la memoria este llena.

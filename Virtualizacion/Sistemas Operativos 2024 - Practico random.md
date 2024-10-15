@@ -55,3 +55,54 @@ Si tenemos paginas de 4k, con 512 entradas en la TLB ¿Cual es el encubrimiento 
 ```
 
 ***AutoHugePage*** permite 
+
+### Paginacion lineal o tablas de un nivel
+Tenemos lo siguiente:
+
+```js
+CR3 = 0x1FAFA //Tiene 20bits
+
+entrada, marco fisico, P, RWX 
+//marco fisico dice si esta presente, read, write, execute
+0: 0xFC0CA, 1, 101
+1: 0xAC01A, 1, 000
+2: 0xFC0CA, 0, 111
+3: 0xA05AD, 0, 000
+4: 0xFDEAD, 1, 111
+```
+
+Queremos traducir de memoria virtual a memoria física.
+
+```js
+0x00001FFF
+0x00000AAA
+0x00040EF0
+0x0000DEAF
+```
+
+Primero notemos que estas direcciones tienen 32bits. Entonces primero tenemos que dividir en 2:
+
+```c++
+//Por ejemplo la siguiente direccion quedaria asi:
+direccion => entrada en la tabla de pagina, desplazamiento
+0x00001FFF => 00001, FFF
+```
+
+Entonces me dice que debo mirar la entrada numero 1 de la tabla de paginas. Pero ahora nos podríamos preguntar ¿Donde esta la tabla de paginas? ***Esta donde apunta CR3*** 
+
+En este caso nuestro **CR3 = 0x1FAFA** y su entrada numero 1 es **0xAC01A** (lo vemos en la tabla del comienzo)
+
+Entonces ahora debemos traducir de virtual a fisica. Para ello debo agarrar la tabla mirar el marco numero 1 (en este caso) y tomar su marco fisico (o sea los 5hexa) y pegarlo en la direccion fisica y luego seguido pegar el desplazamiento
+
+Entonces traduzcamos de virtual a fisica
+
+```js
+0x00001FFF => 0xAC01AFFF //Notar que aunque esta presente no se puede acceder porque RWX=000
+0x00000AAA => 0xFC0CAAAA
+0x00000AAB => 0xFC0CAAAB
+0x00000000 => 0xFC0CA000
+0x00040EF0 => No sabemos porque no tenemos la entrada 64 en la tabla
+0x0000DEAF => IDEM que anterior con 13
+0x00003FFF => No es valida => Page Fault (PF)
+```
+
