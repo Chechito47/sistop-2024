@@ -94,7 +94,7 @@ En este caso nuestro **CR3 = 0x1FAFA** y su entrada numero 1 es **0xAC01A** (lo 
 
 Entonces ahora debemos traducir de virtual a fisica. Para ello debo agarrar la tabla mirar el marco numero 1 (en este caso) y tomar su marco fisico (o sea los 5hexa) y pegarlo en la direccion fisica y luego seguido pegar el desplazamiento
 
-Entonces traduzcamos de virtual a fisica
+Entonces traduzcamos de ***virtual a fisica***
 
 ```js
 0x00001FFF => 0xAC01AFFF //Notar que aunque esta presente no se puede acceder porque RWX=000
@@ -104,5 +104,49 @@ Entonces traduzcamos de virtual a fisica
 0x00040EF0 => No sabemos porque no tenemos la entrada 64 en la tabla
 0x0000DEAF => IDEM que anterior con 13
 0x00003FFF => No es valida => Page Fault (PF)
+0x00002000 => 0xFC0CA000 
+0x00000000 => 0xFC0CA000
+//Comparto la misma direccion fisica entre varias direcciones virtuales, es util por ejemplo con las librerias
 ```
 
+
+***Traducir de fisica a virtual:***
+
+```js
+0xA05AD444 => 0x00003444
+0xFC0CA111 => 0x00000111 && 0x00002111
+0xFC0CA222 => 0x00000222 && 0x00002222
+0xC0C0C0C0 => No sabemos
+```
+
+
+### Paginacion de dos niveles, la realidad en i386
+***Esquema (10, 10, 12)***
+CR3 = 0x01000, tiene 20bits
+
+| 0x01000                                                                                     | 0x00001                                                                | 0x00002                                                               |
+| ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 0: 0x00001, 1, 111<br>1: 0x00002, 1, 111<br>2: 0x00001, 1, 111<br>3: 0x00000, 0, 111<br>... | 0: 0xFAFAF, 1, 111<br>1:  0xC0CC0, 1, 111<br>2: 0xF0F0F, 1, 111<br>... | 0: 0x11111, 1, 111<br>1: 0x11111, 1, 111<br>2: 0x11111, 1, 111<br>... |
+| 3FE:<br>3FF: 0x01000, 1, 111                                                                | 3FE:<br>3FF: 0xE0E0E, 1, 111                                           | 3FE: 0x11111, 1, 111<br>3FF: 0x11111, 1, 111<br>                      |
+
+Notemos que son 1024 entradas.
+***Traducir de virtual a fisica:***
+
+Primero vemos que la columna izquierda es page directory porque corresponde con el CR3.
+
+Lo importante del esquema (10, 10, 12) es que en vez de decirnos la primera columna cual es el marco de pagina fisico final nos dice cual es el marco de pagina fisico donde esta la page table. Entonces la tabla del CR3 nos dice donde esta la page table que voy a terminar leyendo.
+
+Entonces los primeros 10bits forman el idxpgdir, los siguientes 10 el idxpgtable y los ultimos 12 el offset.
+
+En el primer caso, veo que el idxpgdir es 0, el idxpgtab es 0 y el offset es 0. Entonces primero me fijo el valor 0 (porque el idxpgtab es 0) en la tabla 0x010000 y veo que ese valor es el 0x00001. Entones me voy a esa tabla y me fijo el primer valor (porque el idxpagdir es 0) el cual es 0xFAFAF. Entonces pongo eso + el offset.
+
+```js
+0x00000000 => idxpgdir=0, idxpgtab=0, offset=0 => 0xFAFAF000
+0x00000FFF => idxpgdir=0, idxpgtab=0, offset=FFF => 0xFAFAFFFF
+0x00002FFF => idxpgdir=0, idxpgtab=2, offset=FFF => 0xF0F0FFFF
+0x00001FAA => idxpgdir=0, idxpgtab=1, offset=FAA => 0xC0CC0FAA
+0x00802AAA => (0000 0000 10, 00 0000 0010, 1010 1010 1010)
+			  idxpgdir=2, idxpgtab=2, offset=AAA => 0xF0F0FAAA
+0xFF000000 => (1111 1111 00, 00 0000 0000, 0000 0000 0000)
+			  idxpgdir=3FF, idxpgtab=0, offset=0 => PAGE FAULT (mapea al 3FE del 0x00001 que no esta indicada)
+```

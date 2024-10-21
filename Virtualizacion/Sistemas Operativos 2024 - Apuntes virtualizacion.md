@@ -29,6 +29,9 @@ Primero muestra la dirección y luego la cantidad de bytes
 ### Software y hardware
 Ambos deben trabajar y diseñar en conjunto los avances, por ejemplo el crear el MMU se dio gracias a una necesidad de software y se termino implementando en el hardware.
 
+### COW (Copy On Write)
+Es un truco, se usa para duplicar las tablas de paginas pero se mantienen siendo las mismas y cuando escribo ahi si se cambian. Gracias a este truco el costo del fork es casi 0.
+
 ---
 
 ## **Multiplexación**
