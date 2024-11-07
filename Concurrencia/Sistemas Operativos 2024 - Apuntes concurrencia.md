@@ -1,6 +1,6 @@
 # ***CONCURRENCIA***
 
-## Anotaciones sueltas
+## ***Anotaciones sueltas***
 ### Volatile
 Volatile, es un tipo de varibale, dice que nunca podemos suponer que si escribrimos un valor por ejemplo 4, luego nunca vamos a poder que vale 4
 La variable a la cual estoy marcando como volatil puede ser modifica por otro hardware. No ncesariamente lo que escriba va a permanecer constante por mas que no la toque.
@@ -426,5 +426,204 @@ Incluimos la libreria **pthread.h**. Luego en la link line debemos especificar e
 prompt> gcc -o main main.c -Wall -pthread
 ```
 
+## ***Locks***
+### Introducción
+Un lock es una variable y por eso es necesario declararlo (por ejemplo con mutex). Estos guardan el estado de lock en todo momento los cuales son **available(unlocked o free)** o **acquired(locked o held)**. También pueden guardar otra información como que trhead tiene el lock o una lista para el orden en que se hará acquired pero esta información esta escondida del usuario.
 
+### Como funcionan
+El funcionamiento de **lock()** y **unlock()** es sencillo: Llamando a *lock()* tratamos de adquirir el lock, si ningún otro thread lo tiene (o sea si esta free) lo acquire (adquirimos) y entramos a la seccion critica (esto generalmente se conoce como **owner del lock**). Si otro thread hace lock() de la misma variable de lock no va a retornar mientras el lock lo tenga otro thread.
 
+Una vez que el owner hace *unlock()* el lock esta disponible. Si ningún otro thread esta esperando por el lock se pone en estado free. En cambio si hay threads esperando (estancados en lock() esperando) eventualmente notaran o serán informados que el lock esta libre y lo tomaran.
+
+Para usarlos agregamos un poco de código alrededor de la sección critica:
+
+```c
+lock_t mutex; // some globally-allocated lock ’mutex’
+...
+lock(&mutex);
+balance = balance + 1;
+unlock(&mutex);
+```
+
+### Pthreads
+El nombre que se la da a los locks en POSIX es ***mutex***:
+
+```c
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+Pthread_mutex_lock(&lock); // wrapper; exits on failure
+balance = balance + 1;
+Pthread_mutex_unlock(&lock);
+```
+
+En lugar de tener un bloque grande que es usado cada vez que accedemos a la sección critica es mejor tener distintos locks que protejan la información permitiéndonos que varios threads tengan lock a la vez.
+
+### Contruir un lock
+Para construir un lock es necesario ayuda del hardware y del SO. Veremos la ayuda del SO mas en detalle.
+
+### Evaluar el lock
+Antes de propiamente construir el lock es necesario evaluarlo para saber si sera útil o no. El criterio que usaremos consta de 3 puntos claves:
+
+- **Mutual exclusión**: Tenemos que asegurarnos que el lock previene que múltiples threads accedan al lock asegurando la exclusión mutua.
+- **Fairness**: Hay que asegurarse que todos los threads que quieren el lock eventualmente lo obtengan y ninguno sufra de **starvation**.
+- **Performance**: Usar lock empeora el rendimiento pero hay que ver cuanto porque hay varios casos. Un caso es del **no contention** donde un solo thread esta corriendo adquiere el lock y luego lo suelta. Otro es el caso en que múltiples threads están compitiendo por el lock con un solo CPU. También esta el caso en que haya múltiples CPUS... 
+
+### Controlar las interrupciones 
+Una de las primeras y mas primitivas soluciones para asegurar la exclusion mutua era desactivar las interrupciones en las secciones criticas, fue inventado para procesadores con un solo CPU.
+
+```c
+void lock() {
+    DisableInterrupts();
+}
+void unlock() {
+    EnableInterrupts();
+}
+```
+
+De esta manera nos aseguramos que el código dentro de la sección critica no sera interrumpido y que se ejecutara como si fuera atómico. Cuando se termine le ejecución de la sección critica activamos de nuevo las interrupciones.
+
+Lo positivo de esta implementacion es su sencillez pero tiene muchos **puntos negativos**:
+
+- La implementacion requiere una operación privilegiada por lo que es necesario confiar en el código.
+- No funciona con múltiples CPUS
+- Desactivar las interrupciones por largos periodos de tiempo puede provocar fallos o perdida de información en el sistema.
+
+### Usar loads y stores (Fallido)
+Veamos una implementacion fallida la cual nos dará una idea general. Para ello usaremos una sola variable y accederemos a ella via loads y stores. El código es el siguiente:
+
+```c
+typedef struct __lock_t { int flag; } lock_t;
+
+void init(lock_t *mutex) {
+    // 0 -> lock is available, 1 -> held
+    mutex->flag = 0;
+}
+
+void lock(lock_t *mutex) {
+    while (mutex->flag == 1) // TEST the flag
+         ; // spin-wait (do nothing)
+    mutex->flag = 1;
+ // now SET it!
+}
+
+void unlock(lock_t *mutex) {
+    mutex->flag = 0;
+}
+```
+
+La idea es sencilla, usar la variable flag para indicar si algún thread tiene el lock o no. El primer thread que entre a la sección critica llama a lock() el cual verifica si la flag es 1 o no, si no lo es la setea en 1 para indicar que ahora tiene el lock. Cuando termina llama a unlock y pone flag en 0. Si otro thread llama a lock cuando no esta libre entra en un **spin-wait** hasta que lo este.
+
+El código tiene dos problemas, uno de **correctness** y otro de **performance**:
+
+Imaginemos que el código se intercala de la siguiente manera cuando flag=0
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/locks_failed_attempt.png)
+
+Vemos que se produce un caso en que ambos threads setean flag=1 y por ende ambos entran a la seccion critica.
+
+En cuanto el problema de performance se da cuando un thread espera que otro libre el lock porque queda infinitamente chequeando el valor de flag, queda en lo que se conoce como un **spin-wait**.
+
+### Construir spin locks con Test-And-Set
+Porque las implementacion anteriores no fueron utiles fue necesario crear otra, esta se conoce como la instruccion **test-and-set(o atomic exchange)**, funciona con el siguiente codigo:
+
+```c
+int TestAndSet(int *old_ptr, int new) {
+	int old = *old_ptr; // fetch old value at old_ptr
+	*old_ptr = new;     // store ’new’ into old_ptr
+	return old;         // return the old value
+}
+```
+
+Devuelve el valor viejo apuntado por `old_ptr` y simultáneamente lo actualiza al nuevo valor `new`. Se llama test-and-set porque nos permite testear el valor antiguo a la vez que seteamos el lugar de memoria del nuevo valor por lo que es una instruccion lo suficientemente poderosa como para construir un **spin lock**. Entonces veamos un ejemplo de ello:
+
+```c
+typedef struct __lock_t {
+	int flag;
+} lock_t;
+
+void init(lock_t *lock) {
+	// 0: lock is available, 1: lock is held
+	lock->flag = 0;
+}
+
+void lock(lock_t *lock) {
+	while (TestAndSet(&lock->flag, 1) == 1)
+		; // spin-wait (do nothing)
+}
+
+void unlock(lock_t *lock) {
+	lock->flag = 0;
+}
+```
+
+Imaginemos un caso en que llamamos a lock() y esta libre por lo que flag=0. Cuando el thread llame a TestAndSet(flag=1) la rutina devolvera el valor viejo de flag el cual es 0 haciendo que el thread que estaba llamando a lock el cual ahora esta testando el valor de flag no caiga en un spin-wait y adquiera el lock. Finalmente cambia el valor a 0 y hace sus cosas hasta que libera el lock y pone flag en 0.
+
+El segundo caso que nos podemos imaginar es que un thread ya tiene el lock. En este caso el thread que quiere el lock llama a lock() y a TestAndSet(flag, 1) pero esta vez este ultimo devuelve el valor viejo de flag el cual es 1 porque el lock esta ocupado a la vez que pone flag en 1 de nuevo. Hasta que no se libere el lock, flag sera 1 cayendo en un spin hasta que se libere. Cuando se libera sucede todo con normalidad.
+
+Entonces haciendo el test del valor viejo y actualizando al nuevo valor en la misma operacion nos aseguramos que sea atomico.
+
+#### Spin lock
+Se llama spin lock porque esta en spin consumiendo CPU hasta que el lock este free.
+
+### Peterson's algorithm
+Este es un algoritmo que solucino los problemas con los locks:
+
+```c
+intintflag[2];
+turn;
+
+void init() {
+	// indicate you intend to hold the lock w/ ’flag’
+	flag[0] = flag[1] = 0;
+	// whose turn is it? (thread 0 or 1)
+	turn = 0;
+}
+void lock() {
+	// ’self’ is the thread ID of caller
+	flag[self] = 1;
+	// make it other thread’s turn
+	turn = 1 - self;
+	while ((flag[1-self] == 1) && (turn == 1 - self))
+		; // spin-wait while it’s not your turn
+}
+void unlock() {
+	// simply undo your intent
+	flag[self] = 0;
+}
+```
+
+Posteriormente cayo en deshuso.
+
+### Evaluemos el spin lock
+Evaluemos la implementacion del spin lock propuesta (no la de peterson, la anterior):
+
+Lo mas importante es si cumple el correctness o sea si da exclusion mutua lo cual es verdadero.
+
+El siguiente punto es fariness, o sea si podemos asegurar los threads no sufran de starvation lo cual falla ya que es posible que un thread quede en spin infinitamente.
+
+El ultimo punto es la performance. Aca nos tenemos que imaginar distintos escenarios. Primero supongamos que tenemos solo una CPU por lo que el rendimiento sera malo ya que mientras que un thread tiene el lock y esta en la seccion critica y otros threds quieren el lock estos tendran que ejecutarse para decirles que no pueden obtener el lock consumiendo ciclos de CPU.
+
+En cambio si hay varios CPUS el rendmiento mejora ya que a esas comprobaciones las puede hacer otro CPU.
+
+### Compare and swap
+Es otra implementacion primitiva, se conoce como compare-and-swap o compare-and-exchange. Es una ayuda del hardware. Su codigo en C es el siguiente:
+
+```c
+int CompareAndSwap(int *ptr, int expected, int new) {
+	int original = *ptr;
+	if (original == expected)
+		*ptr = new;
+	return original;
+}
+```
+
+Es muy similar a Test-And-Set, lo unico que cambia es el lock():
+
+```c
+void lock(lock_t *lock) {
+	while (CompareAndSwap(&lock->flag, 0, 1) == 1)
+		; // spin
+}
+```
+
+### Load-linked and Store-Conditional
