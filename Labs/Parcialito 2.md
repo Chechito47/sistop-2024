@@ -11,7 +11,7 @@
 
 ### Funciones
 #### Uptime
-La funcion uptime devuelve cuantas interrupciones por ticks sucedieron desde el inicio de xv6. Por ejemplo el start tick es un llamado a uptime().
+La funcion uptime devuelve cuantis ticks (que se cuenta por interrupciones) sucedieron desde el inicio de xv6. Por ejemplo el start tick es un llamado a uptime().
 
 #### Sleep
 `sleep(void *chan, struct spinlock *lk)`

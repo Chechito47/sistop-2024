@@ -1,27 +1,41 @@
 # ***CONCURRENCIA***
 
 ## ***Anotaciones sueltas***
-### Volatile
-Volatile, es un tipo de varibale, dice que nunca podemos suponer que si escribrimos un valor por ejemplo 4, luego nunca vamos a poder que vale 4
-La variable a la cual estoy marcando como volatil puede ser modifica por otro hardware. No ncesariamente lo que escriba va a permanecer constante por mas que no la toque.
 
-### Mythread
-mythread es una funcion
-
-### Hilos
-Los hilos comparten variables globales, heap y codigo del programa del que son parte
-Con concurrencia puede haber muchos hilos que concurrentemente esten tocando una variable.
+### Tipos de interrupciones
+- Interrupciones externas de hardware: mover el mouse
+- Interrupciones que yo mismo produzco llamando a una syscall
+- Interrupciones que se autoproducen por la ejecucion del programa: Segmentation fault, Page fault.
 
 ### Race condition
-Condicion de carrera, es una lucha entre los hilos para ver quien agarra primero un pedazo de codigo. 
+Hacer primero Test y luego Set provoca race conditions. Por ejemplo:
+
+```c
+if(m->flag == 0)
+   m->flag = 1;
+```
+
+### Volatile
+Volatile, es un tipo de variable, dice que nunca podemos suponer que si escribimos un valor por ejemplo 4, luego nunca vamos a poder que vale 4
+La variable a la cual estoy marcando como volatil puede ser modifica por otro hardware. No necesariamente lo que escriba va a permanecer constante por mas que no la toque.
+
+### Mythread
+mythread es una función
+
+### Hilos
+Los hilos comparten variables globales, heap y código del programa del que son parte
+Con concurrencia puede haber muchos hilos que concurrentemente estén tocando una variable.
+
+### Race condition
+Condición de carrera, es una lucha entre los hilos para ver quien agarra primero un pedazo de código. 
 
 ### No deterministico
-No determinismo es cuando puede dar cualquier valor, por ejemplo 1 o 2 y no se la probalbilidad de dicha cosa. Ausencia total del valor final que va tomar el programa
+No determinismo es cuando puede dar cualquier valor, por ejemplo 1 o 2 y no se la probabilidad de dicha cosa. Ausencia total del valor final que va tomar el programa
 
 ## ***Threads o hilos***
 Ahora vamos a introducir una nueva abstracción llamada ***threads o hilos***.
 
-Anteriormente teníamos una noción algo pobre, asumíamos que siempre trabajabamos en un entorno single-thread, ahora vamos a hacerlo en uno multi-thread lo cual hace que tengamos mas de un punto de ejecución.
+Anteriormente teníamos una noción algo pobre, asumíamos que siempre trabajábamos en un entorno single-thread, ahora vamos a hacerlo en uno multi-thread lo cual hace que tengamos mas de un punto de ejecución.
 
 Una forma de pensar esto es como si se tratasen de procesos separados pero con una importante diferencia, comporten el mismo espacio de direccionamiento y por ende pueden acceder a la mismas direcciones e información.
 
@@ -627,3 +641,958 @@ void lock(lock_t *lock) {
 ```
 
 ### Load-linked and Store-Conditional
+El código es el siguiente:
+
+```c
+int LoadLinked(int *ptr) {
+	return *ptr;
+}
+
+int StoreConditional(int *ptr, int value) {
+	if (no update to *ptr since LL to this addr) {
+		*ptr = value;
+		return 1; // success!
+	} else {
+		return 0; // failed to update
+	}
+}
+```
+
+La diferencia de esta implementacion con otras es en la parte de Store-Conditional. Solo es correcta (actualizando el valor guardado) si no se intervino en el store. En caso de exito devuelve 1 y se actualiza **ptr** con el valor de **value**. Si falla, **ptr** no es actualizado y se devuelve 0.
+
+Ahora veamos como hacer un lock con Load-Linked and Store-Conditional
+
+```c
+void lock(lock_t *lock) {
+	while (1) {
+		while (LoadLinked(&lock->flag) == 1)
+			; // spin until it’s zero
+		if (StoreConditional(&lock->flag, 1) == 1)
+			return; // if set-to-1 was success: done
+					// otherwise: try again
+	}
+}
+
+void unlock(lock_t *lock) {
+	lock->flag = 0;
+}
+```
+
+Esta es la parte interesante. Primero un thread hace spin esperando que **flag** se haga 0 (lo que indica que el lock no fue tomado). Una vez que el thread adquiere el lock via el Store-Conditional si tiene exito el thread atomicamente cambia el valor de flag a 1.
+
+En caso de fallo, una vez que el thread llame a lock() y ejecute el Load-Linked devuelve 0. Antes de que pueda ejecutar el Store-Conditional es interrumpido y otro thread entra en el lock ejecuta el Load-Linked y obtiene tambien un 0.
+
+En este punto dos threads ejecutaron Load-Linked y estan por ejecutar Store-Conditional pero solo uno de ellos va a ser capaz de setear flag en 1 mientras que el otro va a fallar.
+
+### Fetch-And-Add
+Es otra de las instrucciones primitivas. Atomicamente incrementa el valor retornando el valor viejo en una direccion particular. El codigo es el siguiente:
+
+```c
+int FetchAndAdd(int *ptr) {
+	int old = *ptr;
+	*ptr = old + 1;
+	return old;
+}
+```
+
+Ahora veamos como construir un lock:
+
+```c
+typedef struct __lock_t {
+	int ticket;
+	int turn;
+} lock_t;
+
+void lock_init(lock_t *lock) {
+	lock->ticket = 0;
+	lock->turn = 0;
+}
+
+void lock(lock_t *lock) {
+	int myturn = FetchAndAdd(&lock->ticket);
+	while (lock->turn != myturn)
+		; // spin
+}
+
+void unlock(lock_t *lock) {
+	lock->turn = lock->turn + 1;
+}
+```
+
+En lugar de usar un solo valor esta implementacion utiliza un **ticket** y una variable de **turno** en combinacion para hacer el lock.
+
+La operacion es simple: cuando un thread quiere adquirir un lock primero hace un Fetch-And-Add en la varriable **ticket**. Ese valor ahora contiene el valor **de quien es el turno (myturn)**. 
+
+El registro global **lock->turn** es usado para determinar de que thread es el turno. Cuando **myturn == turn** para algun thread entonces es su turno para entrar en la seccion critica. 
+
+Notemos una diferencia entre esta implementacion con las anteriores: se asegura que todos los threads puedan acceder al lock. Al usar un sistema de tickets el cual le asigna a cada thread un valor del ticket, nos aseguramos que en algun momento vaya a correr.
+
+### Yield
+#### Problematica
+En algunas situaciones las implementaciones anteriores pueden ser ineficientes. Imaginemos que hay dos threads corriendo en un solo procesador. Tambien imaginemos que el *thread0 esta en la seccion critica y tiene el lock pero justo es interrumpido*. El *thread1 trata de adquirir el lock pero esta ocupado* por lo que empieza a hacer **spin** hasta que ocurre una interrupcion y thread0 corre de nuevo, termina y libera el lock. Luego thread1 va a poder adquirir el lock y hacer lo que deba.
+
+Lo importante es notar que cuando un thread hace spin estamos desperdiciando un ciclo entero haciendo nada. El problema se vuelve peor cuando tenemos N threads porque N-1 estan haciendo nada. Entonces vemos que **es vital evitar el spinning**.
+
+#### Solucion - yield()
+Para poder evitar el spinning podemos darle al CPU otro thread para correr.
+
+La funcion yield() cambia el estado del proceso que estaba corriendo de running a ready y promueve otro thread a running. Entonces vemos que el yield desplanifica el thread.
+
+#### Sigamos con el ejemplo anterior
+Pensemos en los dos threads que estaban corriendo en un solo CPU. En este caso si un thread llama a lock() se va a encontrar que el lock esta ocupado entonces hace yield al CPU por lo que otro thread va a correr y finalizar su seccion critica.
+
+Ahora consideremos el caso en que hay 100 threads esperando por el lock. Si un thread adquiere el lock y se adelanta a liberarlo, los otros 99 threads van a llamar a lock(), se van a encontrar con que lock esta ocupado por lo que van a hacer yield al CPU. Asumiendo que tenemos algun tipo de RR cada uno de estos 99 van a ejecutar este run-and-yield pattern antes de que el thread que tiene el lock corra de nuevo.
+
+Si bien esta implementacion tiene un costo que es hacer context switch es menor al costo de tener varios threads haciendo nada. 
+
+Pero vemos que esta implementacion sufre de starvation porque un thread puede quedarse infinitamente en yield mientras otros threads entran y salen de la sección critica por que lo que otra implementacion sera necesaria.
+
+### Sleep en lugar de Spinning
+El problema real de las implementaciones anteriores (no la de tickets) es que dejan mucho en el aire porque es el scheduler el que decide quien es el siguiente en correr y si hace una mala elección el thread puede quedar en spin-waiting o hacer yield. En ambos casos hay rendimiento desperdiciado y no se evita el starvation.
+
+Lo ideal seria tener ***control explicito*** sobre que thread sera el siguiente en adquirir el lock. Para ello necesitamos ayuda del SO para mantener registro de quienes esperan por el lock.
+
+Podemos ayudarnos de dos instrucciones de Solaris:
+
+- **park()**: pone un thread a dormir
+- **unpark(threadID)**: despierta un thread particular
+
+Estas dos instrucciones las podemos utilizar para construir un lock que lo ponga al que pide el lock a dormir si es que lock esta ocupado. SI el lock esta libre lo despierta. Veamos un ejemplo:
+
+```c
+typedef struct __lock_t {
+	int flag;
+	int guard;
+	queue_t *q;
+} lock_t;
+
+void lock_init(lock_t *m) {
+	m->flag = 0;
+	m->guard = 0;
+	queue_init(m->q);
+}
+
+void lock(lock_t *m) {
+	while (TestAndSet(&m->guard, 1) == 1)
+		; //acquire guard lock by spinning
+	if (m->flag == 0) {
+		m->flag = 1; // lock is acquired
+		m->guard = 0;
+	} else {
+		queue_add(m->q, gettid());
+		m->guard = 0;
+		park();
+	}
+}
+
+void unlock(lock_t *m) {
+	while (TestAndSet(&m->guard, 1) == 1)
+		; //acquire guard lock by spinning
+	if (queue_empty(m->q))
+		m->flag = 0; // let go of lock; no one wants it
+	else
+		unpark(queue_remove(m->q)); // hold lock
+									// (for next thread!)
+		m->guard = 0;
+}
+```
+
+Primero combinamos la idea de Test-And-Set con una lista para acceder al lock explicita para hacer un lock mas eficiente.
+
+Segundo usamos esa lista para ayudar a mantener el control sobre quien es el siguiente en acceder al lock y evitar el starvation.
+
+Notemos algunas cosas, usamos una guarda como un spin-lock alrededor de la flag. Ademas esta implementacion no evita del todo el spin-waiting, un thread puede ser interrumpido mientras adquiere o suelta el lock causando que otros thread queden en spin-waiting. Sin embargo este tiempo es limitado por lo que es una implementacion razonable.
+
+Tambien debemos notar que cuando un thread no adquiere el lock lo agregamos a la fila, seteamos la guarda en 0 y hacemos yield al CPU. Ademas hay que notar que cuando hacemos wakeup no ponemos la flag en 0.
+
+Finalmente debemos notar que la race condition esta en parte soluciona pero en parte no porque ahora tenemos otra condition: la **wakeup/waiting race** porque si hay un context switch luego de poner la guarda en 0 y hacer park() se hace un deadlock.
+
+para solucionar este problema Solaris agrega una tercer instruccion: **setpark()**. Llamandola , un thread puede indicar si esta a punto de hacer **park**. Si lo esta y es interrumpido y otro thread llama unpark() antes del park() actual, el otro park regresa inmediatamente en lugar de dormirse. Para esto se añade lo siguiente en el lock:
+
+```c
+queue_add(m->q, gettid());
+setpark(); // new code
+m->guard = 0;
+```
+
+### Lock de Linux
+En Linux existe **futex** el cual es similar al de Solaris pero provee mas funcionalidades de kernel. Especificamente cada futex tiene asociado un lugar especifico en memoria. Podemos usar los futex para hacer sleep y wakeup.
+
+Hay dos instrucciones disponibles:
+
+- **futex_wait(address, expected)**: si el valor de address y expected es el mismo pone el thread a dormir. Si no lo es retorna.
+- **futex_wake(address)**: despierta un thread que estaba esperando en la fila.
+
+El codigo es el siguiente:
+
+```c
+void mutex_lock (int *mutex) {
+	int v;
+	// Bit 31 was clear, we got the mutex (fastpath)
+	if (atomic_bit_test_set (mutex, 31) == 0)
+		return;
+	atomic_increment (mutex);
+	while (1) {
+		if (atomic_bit_test_set (mutex, 31) == 0) {
+			atomic_decrement (mutex);
+			return;
+		}
+		// Have to waitFirst to make sure futex value
+		// we are monitoring is negative (locked).
+		v = *mutex;
+		if (v >= 0)
+			continue;
+		futex_wait (mutex, v);
+	}
+}
+
+void mutex_unlock (int *mutex) {
+	// Adding 0x80000000 to counter results in 0 if and
+	// only if there are not other interested threads
+	if (atomic_add_zero (mutex, 0x80000000))
+		return;
+
+	// There are other threads waiting for this mutex,
+	// wake one of them up.
+	futex_wake (mutex);
+}
+```
+
+### Tabla comparativa
+Entonces si hacemos una comparacion mas directa de todas las implementaciones hasta ahora tenemos:
+
+
+| Solucion a la Critical Section                      | ¿Garantiza exclusion mutua? | ¿Es justa?                     | Desempeño                                                                                             | ¿Multicore? | ¿Requiere soporte especial del microprocesador?        |
+| --------------------------------------------------- | --------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------ |
+| **Solucion homeopatica**                            | No, no hay mutex            | Si                             | +++                                                                                                   | Si          | No                                                     |
+| **Espera infinita(while 1)**                        | Si                          | No, depende del scheduler      | ?                                                                                                     | Si          | No                                                     |
+| **Deshabilitar las interrupciones**                 | Si                          | No, garantiza de manera lineal | +++                                                                                                   | No          | No                                                     |
+| **Flag simple (con spin-wait)**                     | No, hay race condition      | No, depende del scheduler      | Si la CS es corta +++.<br>Si la CS es larga ---                                                       | Si          | No                                                     |
+| **Spin lock(con spin-wait)**                        | Si                          | No, depende del scheduler      | Si la CS es corta:<br>   Si es monocore: ---<br>   Si es multicore: +++.<br><br>Si la CS es larga --- | Si          | Si, requiere Test-And-Set                              |
+| Spin lock CS (Compare-And-Swap)                     | ""                          | ""                             | IDEM, salvo que escribe menos a la memoria                                                            | ""          | ""                                                     |
+| Spin lock LL/SC (Load-Linked and Store-Conditional) | ""                          | ""                             | ""                                                                                                    | ""          | Si, es medio raro tipo RISC                            |
+| Spin lock FA (Fetch-And-Address)                    | ""                          | Si                             | ""                                                                                                    | ""          | ""                                                     |
+| Peterson('81)                                       | Si                          | No                             | ""                                                                                                    | Dual-core   | No, solo con instrucciones estandar se arregla         |
+| Dekker('68)                                         | Si                          | No                             | ""                                                                                                    | Dual-core   | No, solo con instrucciones estandar se arregla         |
+| Tickets('74)                                        | Si                          | Si                             | ""                                                                                                    | Ilimitado   | Funciona en arquitecturas donde el store no es atomico |
+| Yield()                                             |                             |                                |                                                                                                       |             |                                                        |
+
+Notemos que todos los spinlocks son equivalentes.
+
+| Thread 0                                                                   | Thread 1                                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| while (1) {<br>   lock()<br>   ...<br>   CS0<br>   ...<br>   unlock()<br>} | while (1) {<br>   lock()<br>   ...<br>   CS1<br>   ...<br>   unlock()<br>} |
+
+```css
+Homeopatica:
+lock(): skip
+unlock(): skip
+
+Espera infinita:
+lock(): while(1)
+unlock(): skip
+
+Deshabilitar interrupciones:
+lock(): CLI (deshabilito antes de CS)
+unlock(): STI (habilito despues de CS)
+
+Flag simple:
+lock(): while(lock);
+		lock=1;
+unlock(): lock=0;
+```
+
+
+## ***CONDITION VARIABLES***
+Es otra de las primitivas para la sincronizacion, hasta ahora solo vimos locks.
+## Problema de la region critica
+Supongamos que tenemos lo siguiente:
+
+```c
+{ cs=0 }
+T0:                       T1:
+	while(1) {                while(1) {
+		cs=cs+1;                  cs=cs+1;
+		CS0                       CS1
+		cs=cs-1;                  cs=cs-1;
+	}                         }
+
+INV: 0<=cs<=1
+(Decimos que en la critical section pueden haber 0 o 1 procesos, ni mas ni menos)
+Pero vemos que con esta implementacion no se cumple el invariante. En cambio si hacemos:
+
+T0:                       T1:
+	while(1) {                while(1) {
+		mutex_lock()              mutex_lock()
+		cs=cs+1;                  cs=cs+1;
+		CS0                       CS1
+		cs=cs-1;                  cs=cs-1;
+		mutex_unlock()            mutex_unlock()
+	}                         }
+
+De esta forma el problema de la region critica esta solucionado
+
+Luego si hago esto pero con la logica de productor/consumidor tengo:
+
+P:                       C:
+	while(1) {                while(1) {
+		--sync--                  --sync--
+		p=p+1;                    c=c+1;
+		PROD                      CONS
+	}                         }
+
+INV: 0 <= p-c <= N (El N es la distancia que puede haber entre productor y consumidor, por ejemplo si es 1 significa que se ejecuta un productir y luego si o si el consumidor, es el lugar donde guardar las cosas. El consumidor siempre esta por detras del productor. A medida que aumenta el N aumenta su capacidad de accion. Si el productor va mucho mas rapido que el consumidor eventualmente se va a llenar.)
+```
+
+### Condition variables
+Locks no son la única primitiva necesaria para los programas concurrentes. Hay muchos casos en los que un therad quiere chequear una condición antes de seguir. Por ejemplo un thread padre podría querer chequear si su hijo termino su ejecución antes de seguir (*esto se llama join()*)
+
+```c
+void *child(void *arg) {
+	printf("child\n");
+	// XXX how to indicate we are done?
+	return NULL;
+}
+
+int main(int argc, char *argv[]) {
+	printf("parent: begin\n");
+	pthread_t c;
+	Pthread_create(&c, NULL, child, NULL); // child
+	// XXX how to wait for child?
+	printf("parent: end\n");
+	return 0;
+}
+```
+
+Podríamos usar una variable compartida pero seria muy ineficiente porque el padre haría spin desperdiciando ciclos de CPU como se puede observar:
+
+```c
+volatile int done = 0;
+
+void *child(void *arg) {
+	printf("child\n");
+	done = 1;
+	return NULL;
+}
+
+int main(int argc, char *argv[]) {
+	printf("parent: begin\n");
+	pthread_t c;
+	Pthread_create(&c, NULL, child, NULL); // child
+	while (done == 0)
+		; // spin
+	printf("parent: end\n");
+	return 0;
+}
+```
+
+**Lo que deberíamos hacer es de alguna manera poner al padre a dormir hasta que la condición sea verdadera.**
+
+### Definition y rutines
+Para esperar por una condición verdadera los threads pueden hacer uso de lo que se conoce como ***condition variable***. Los condition variables son una lista explicita en la que los threads se pueden poner cuando un estado de la ejecución no es el esperado. Otro thread luego cambia ese estado y puede despertar los threads que estaban esperando y permitir que continúen con sus ejecuciones.
+
+### Declarar una condition variable
+Para declarar una condition variable podemos simplemente escribir:
+
+```c
+pthread_cond_t c;
+```
+
+Declarando asi *"c"* como condition variable.
+
+#### Operaciones
+Una condition variable tiene dos operaciones asocidadas:
+
+- **wait()**: se ejecuta cuando un thread se quiere dormir a si mismo.
+- **signal()**: se ejecuta cuando un thread cambio algo en el programa y queremos despertar threads dormidos que esperaban por esa condicion.
+
+Son de la siguiente manera:
+
+```c
+pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m);
+pthread_cond_signal(pthread_cond_t *c);
+```
+
+*Notemos que wait() toma un mutex como argumento asumiendo que esta ocupado cuando wait() es llamado. Esta función debe liberar el lock y poner el trhead a dormir atomicamente. Cuando el thread se levante volverá a adquirir el lock antes de retornar. De esta forma se preveen ciertas race condition cuando un thread trata de ponerse a si mismo a dormir.*
+
+Aunque en esta implementacion hay dos casos a considerar en los cuales falla:
+
+- El thread padre crea al thread hijo pero continua corriendo, llama a thr_join() para esperar que el hijo termine, pide el lock y se pone a dormir. El hijo corre y llama a thr_exit() para despertar al padre entonces ese codigo adquiere el lock, setea la variable done y señala que el padre se esta levantando. Finalmente el padre corre, adquiere el lock y termina lo que debia. Osea es el caso de exito.
+- En el otro caso, el hijo corre inmediatamente luego de su creacion, setea done=1 y llama a signal para despertar al thread dormido pero no hay niguno por lo que retorna. Luego el padre corre, llama a thr_join(), ve que done=1 y entonces no hace nada y retorna. Este es un caso de error porque no hacemos nada.
+
+*Notar que usamos while en lugar de if.*
+
+Veamos una implementacion incorrecta:
+
+```c
+void thr_exit() {
+	done = 1;
+	Pthread_cond_signal(&c);
+}
+
+void thr_join() {
+	if (done == 0)
+		Pthread_cond_wait(&c);
+}
+```
+
+Esta implementacion es incorrecta porque sufre del problema **producer/consumer**.
+
+### Producer/Consumer problem
+También conocido como bounded buffer problem. Es un problema de sincronizacion. Imaginemos que tenemos thread productores y threads consumidores. Los productores generan información y la ponen en un buffer mientras que los consumidores agarran esa información y la consumen de alguna manera.
+
+La primera cosa que necesitamos es un buffer compartido en donde los productores pondrán la información y de donde los consumidores la tomaran. Usemos un entero para eso.
+
+```c
+int buffer;
+int count = 0; // initially, empty
+
+void put(int value) {
+	assert(count == 0);
+	count = 1;
+	buffer = value;
+}
+
+int get() {
+	assert(count == 1);
+	count = 0;
+	return buffer;
+}
+```
+
+- **put()**: asume que el buffer esta libre y pone un valor en el y marca que esta lleno seteando **count=1**.
+- **get()**: hace lo contrario, setea el buffer a vacio seteando **count=0** y devuelve el valor.
+
+Ahora necesitariamos algunas rutinas para saber cuando esta bien acceder al buffer. Las condiciones para ello son:
+
+- Solo poner información en el buffer cuando count=0
+- Solo obtener información del buffer cuando count=1
+
+### Solución incorrecta
+Veamos una solucion que si bien tiene un problema nos acerca un poco mas a lo que queremos. Supongamos que tenemos un solo productor y un solo consumidor. Sabemos que poniendo un lock alrededor de ellos no funciona, necesitamos algo mas. Ese algo son las condition variables:
+
+```c
+int loops; // must initialize somewhere...
+cond_t cond;
+mutex_t mutex;
+
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex); // p1
+		if (count == 1) // p2
+			Pthread_cond_wait(&cond, &mutex); // p3
+		put(i); // p4
+		Pthread_cond_signal(&cond); // p5
+		Pthread_mutex_unlock(&mutex);// p6
+	}
+}
+
+void *consumer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex); // c1
+		if (count == 0) // c2
+			Pthread_cond_wait(&cond, &mutex); // c3
+		int tmp = get(); // c4
+		Pthread_cond_signal(&cond); // c5
+		Pthread_mutex_unlock(&mutex); // c6
+		printf("%d\n", tmp);
+	}
+}
+```
+
+Tenemos una sola condition variable **"cond"** asociada al lock **"mutex"**.
+
+Examinemos el codigo: cuando un productor quiere llenar el buffer espera a que este vacio (p1-p3). El consumidor tiene la misma logica pero espera que este vacio (c1-c3). Con un solo consumidor y productor funciona pero si hay mas tendremos problemas:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/condition_variables_table.png)
+
+Este problema se produce por una simple razon: luego de que el productor despierta a Tc1, pero antes de que Tc1 siquiera corra, el estado del bounded buffer cambio debido a Tc2. Un valor fue puesto en el buffer pero no hay garantia de que el thread que se desperto corra.
+
+### Mejor pero todavia es incorrecta
+Cambiemos el ***if por un while***. Ahora el consumidor Tc1 se despierta y como el lock esta ocupado inmediatamente chequea el estado de la variable compartida (c2). Si el buffer esta libre el consumidor se vuelve a dormir (c3). 
+
+Usamos un while en lugar del if porque si bien a veces no es necesario rechequear la condición es bueno hacerlo.
+
+Pero este codigo todavía tiene un bug: todos los 3 threads se pueden quedar durmiendo.
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/condition_variables_bug.png)
+
+Entonces señalizar es claramente necesario y debe ser de manera mas directa. Un consumidor no debe despertar otros consumidores y un productor no debe despertar productor. Solo se deben hacer de manera cruzada.
+
+### Solucion del Single buffer Producer/Consumer
+
+La solución es algo corta: usar dos condition variables en lugar de una para así poder señalizar de manera apropiada que tipo de thread debe despertarse cuando el estado cambie.
+
+```c
+cond_t empty, fill;
+mutex_t mutex;
+
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex);
+		while (count == 1)
+			Pthread_cond_wait(&empty, &mutex);
+		put(i);
+		Pthread_cond_signal(&fill);
+		Pthread_mutex_unlock(&mutex);
+	}
+}
+
+void *consumer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex);
+		while (count == 0)
+			Pthread_cond_wait(&fill, &mutex);
+		int tmp = get();
+		Pthread_cond_signal(&empty);
+		Pthread_mutex_unlock(&mutex);
+		printf("%d\n", tmp);
+	}
+}
+```
+
+Como vemos en el código, un thread productor espera por la condición **empty** y señala **fill**. De igual forma, un thread consumidor espera por **fill** y señala **empty**. De esta forma el problema es solucionado por diseño: un consumidor jamas podra de manera accidental despertar a un consumidor, y un productor jamas podra despertar a un productor.
+
+### Uso correcto de la solución de Producer/Consumer
+El ultimo cambio que haremos es para asegurar mas concurrencia y eficiencia. Agregamos mas buffer slots para que multiples valores puedan ser producidos antes de dormirse y que muchos valores puedan ser consumidos antes de dormirse. Ademas asi se es mas eficiente frent a los context switch.
+
+El primer cambio es en la estructura del buffer, especificamente a los funciones **put()** y **get()**:
+
+```c
+int buffer[MAX];
+int fill_ptr = 0;
+int use_ptr = 0;
+int count = 0;
+
+void put(int value) {
+	buffer[fill_ptr] = value;
+	fill_ptr = (fill_ptr + 1) % MAX;
+	count++;
+}
+
+int get() {
+	int tmp = buffer[use_ptr];
+	use_ptr = (use_ptr + 1) % MAX;
+	count--;
+	return tmp;
+}
+```
+
+Tambien cambiamos un poco las condiciones que los productores y consumidores chequean para determinar si dormirse o no. Ademas mostramos la logica correcta del waiting y signaling:
+
+```c
+cond_t empty, fill;
+mutex_t mutex;
+
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex); // p1
+		while (count == MAX) // p2
+			Pthread_cond_wait(&empty, &mutex); // p3
+		put(i); // p4
+		Pthread_cond_signal(&fill); // p5
+		Pthread_mutex_unlock(&mutex); // p6
+	}
+}
+
+void *consumer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		Pthread_mutex_lock(&mutex); // c1
+		while (count == 0) // c2
+			Pthread_cond_wait(&fill, &mutex); // c3
+		int tmp = get(); // c4
+		Pthread_cond_signal(&empty); // c5
+		Pthread_mutex_unlock(&mutex); // c6
+		printf("%d\n", tmp);
+	}
+}
+```
+
+Un productor solo puede dormir si todos los buffers estan llenos (p2). De igual forma un consumidor solo puede dormir si todos los buffers estan vacios (c2).
+
+## ***SEMAFOROS***
+Esta es la ultima primitiva que veremos para solucionar el problema de la sincronizacion.
+
+### Definicion
+Un semaforo es un objeto con valor de **int** que podemos manipular con dos rutinas:
+
+- sem_wait()
+- sem_post()
+
+Como el valor inicial del semaforo determina su comportamiento es necesario inicializar algunos valores:
+
+```c
+#include <semaphore.h>
+sem_t s;
+sem_init(&s, 0, 1);
+```
+
+*En este codigo simplemente declaramos el semaforo "s" y lo inicializamos. Los argumentos que pasamos son el nombre del semaforo que queremos inicializar, un valor que indique si el semaforo sera compartido entre threads del mismo proceso (en todos los casos que veremos si por eso es 0) y por ultimo el valor del semaforo*
+
+Luego de inicializarlos podemos llamar a sus rutinas. Notemos algo de ellas:
+
+```c
+int sem_wait(sem_t *s) {
+	decrement the value of semaphore s by one
+	wait if value of semaphore s is negative
+}
+
+int sem_post(sem_t *s) {
+	increment the value of semaphore s by one
+	if there are one or more threads waiting, wake one
+}
+```
+
+- **sem_wait()**: retorna inmediatamente o provoca que quien lo llama suspenda su ejecucion esperando por sem_post().
+- **sem_post()**: no espera por nada en particular, incrementa el valor del semaforo y si hay un thread durmiendo que esperaba ese semaforo lo despierta
+- Si el valor de un semaforo es negativo es equivalente al numero de semaforos dormidos
+
+### Binary semaphores (Locks)
+Podemos usar los semaforos como locks:
+
+```c
+sem_t m;
+sem_init(&m, 0, X); // init to X; what should X be?
+
+sem_wait(&m);
+// critical section here
+sem_post(&m);
+```
+
+Ahora seria valido preguntarnos que valor tendra "X" que es el valor inicial del semaforo. Este tendria que ser 1.
+
+#### Posible escenario
+Imaginemos que tenemos dos threads. El **thread0** llama a **sem_wait()** decrementando el valor a 0 provocando que el thread se duerma y que sem_wait retorne y que el thread que llamo a la rutina siga su ejecucion.
+
+Ahora **thread0** es libre de entrar a la seccion critica. Si ningun otro thread trata de adquirir el lock mientras **thread0** esta en la seccion critica, cuando llame a **sem_post()** va a restaurar el valor del semaforo a 1.
+
+La traza de ejecucion seria la siguiente:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/semaphores_example_1.png)
+
+#### Otro posible escenario
+Otro escenario posible pero mas interesante es que llegamos hasta el punto en que **thread0** tiene el lock pero antes de poder hacer **sem_post()** el **thread1** trata de entrar a la seccion critica llamando a **sem_wait()**. En este caso **thread1** va a decrementar el valor del semaforo a -1 (*porque el valor del semaforo ya era 0*) haciendo que se duerma el thread.
+
+Cuando **thread0** corra de nuevo eventualmente va a llamar a **sem_post()** incrementando el valor del semaforo a 0 despertando al **thread1** el cual va a adquirir el lock. Cuando **thread1** termine va a aumementar el valor del semaforo a 1 de nuevo.
+
+La traza de ejecucion seria la siguiente:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/semaphores_example_2.png)
+
+### Semaforos para ordenar
+Los semaforos tambien son utiles para ordenar eventos en un programa concurrente.
+
+Por ejemplo, un thread podria querer esperar a que una lista tenga algun elemento para luego borrarlo. Generalmente tenemos un thread esperando que pase algo y otro thread haciendo que ese algo pase y señalando que paso para despertar al thread que estaba esperando eso.
+
+#### Ejemplo
+Veamos un ejemplo, supongamos que tenemos un thread que crea otro thread y quiere esperar hasta que complete su ejecucion. Tendriamos el siguiente programa:
+
+```c
+sem_t s;
+
+void *child(void *arg) {
+	printf("child\n");
+	sem_post(&s); // signal here: child is done
+	return NULL;
+}
+
+int main(int argc, char *argv[]) {
+	sem_init(&s, 0, X); // what should X be?
+	printf("parent: begin\n");
+	pthread_t c;
+	Pthread_create(&c, NULL, child, NULL);
+	sem_wait(&s); // wait here for child
+	printf("parent: end\n");
+	return 0;
+}
+```
+
+Si lo corremos obtendríamos el siguiente print:
+
+```c
+parent:begin
+child
+parent:end
+```
+
+#### Valor del semaforo
+Esta es la forma la cual queremos usar los semáforos. Entonces la pregunta que nos podríamos hacer seria ¿Cual debe ser el valor inicial del semáforo?
+
+**La respuesta es que debe ser 0**. Hay dos casos para considerar:
+
+- Supongamos que el padre crea al hijo pero el hijo todavia no corrio. En este caso el padre va a llamar a **sem_wait()** antes de que el hijo llame a **sem_post()**. Lo ideal seria que el padre espere a que el hijo termine su ejecucion para correr pero esto solo podria pasar si el valor del semaforo no es mayor a 0. La justificacion es la siguiente: el padre corre decrementando el valor a -1 y se duerme, luego el hijo corre, llama a sem_post() e incrementa el valor del semaforo a 0 y despierta al padre el que retornara al llamar **sem_wait()** terminando asi el programa.
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/semaphores_trace_1.png)
+
+- El otro posible caso sucede cuando el hijo termina su ejecucion antes de que el padre sea capaz de llamar a **sem_wait()**. En este caso el hijo primero llamara a **sem_post()** incrementando el valor del semaforo a 1. Cuando el padre tenga la posibilidad de correr llamara a **sem_wait()** decrementara el valor del semaforo a 0 y retornara por el **sem_wait()** sin esperar. Notemos que cumple con lo que buscabamos.
+
+### Producer/Consumer (Bounded buffer) problem
+#### Primer intento
+Para este primer intento introducimos dos semaforos: **vacio** y **lleno** los cuales los threads usaran para indicar si un buffer esta lleno o vacio respectivamente. Las rutinas **put()** y **get()** son las siguientes:
+
+```c
+int buffer[MAX];
+int fill = 0;
+int use = 0;
+
+void put(int value) {
+	buffer[fill] = value; // Line F1
+	fill = (fill + 1) % MAX; // Line F2
+}
+
+int get() {
+	int tmp = buffer[use]; // Line G1
+	use = (use + 1) % MAX; // Line G2
+	return tmp;
+}
+```
+
+El codigo de la implementacion es el siguiente:
+
+```c
+sem_t empty;
+sem_t full;
+
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		sem_wait(&empty); // Line P1
+		put(i);           // Line P2
+		sem_post(&full);  // Line P3
+	}
+}
+
+void *consumer(void *arg) {
+	int tmp = 0;
+	while (tmp != -1) {
+		sem_wait(&full);  // Line C1
+		tmp = get();      // Line C2
+		sem_post(&empty); // Line C3
+		printf("%d\n", tmp);
+	}
+}
+
+int main(int argc, char *argv[]) {
+	// ...
+	sem_init(&empty, 0, MAX); // MAX are empty
+	sem_init(&full, 0, 0);    // 0 are full
+	// ...
+}
+```
+
+Veamos que hace el codigo. Primero el productor espera a que el buffer este vacio para poner informacion dentro, de manera similar el consumidor espera a que el buffer este lleno antes de usarlo.
+
+##### Situacion
+Imaginemos que tenemos solo dos threads, uno productor y otro consumidor. Ademas imaginemos que MAX=1 y que solo tenemos un CPU.
+
+Supongamos que primero corre el consumidor (C1), llamando a **sem_wait(&full)**. Como **full** fue inicializado con el valor 0 lo decrementamos a -1, bloqueamos al consumidor y esperamos a que otro thread llame a **sem_post()**.
+
+Luego el productor corre (P1), llama a **sem_wait(&empty)** y lo decrementa (porque **empty** fue inicilizado con valor = **MAX** que en este caso es 1) dejandolo en 0 y luego pone su informacion en la primer entrada del buffer (P2). Luego se ejecuta P3 que llama a **sem_post(&full)** cambiando el valor del semaforo full de -1 a 0 y despertando al consumidor que se durmio.
+
+***Ahora pueden suceder dos cosas:***
+
+- Si el productor continua corriendo va a hacer loop y ejecuta de nuevo P1. Esta vez se bloqueara porque el semaforo **empty** vale 0.
+- Si el productor es interrumpido y el consumidor comienza a correr va a retornar de **sem_wait(&full)** (C1), se encuentra con que el buffer esta lleno y lo consume
+
+En ambos casos tenemos un comportamiento correcto.
+
+##### Situacion MAX > 1
+Supongamos que MAX es 10 y asumamos que hay multiples productores y consumidores. Entonces tendriamos una race condition debido a las funciones **put()** y **get()**.
+
+Imaginemos que tenemos dos productores (Pa y Pb), ambos llamando a **put()** al mismo tiempo. Asumamos que el productor Pa corre primero y llena la primer entrada del buffer (fill=0 linea F1). Antes de que Pa tenga la chance de incrementar el valor de fill a 1 es interrumpido. El productor Pb comienza a correr y cuando llega a la linea F1 tambien pone su informacion en la primer entrada del buffer sobreescribiendo la informacion que estaba antes.
+
+### Solucion: exclusion mutua
+La implementacion anterior falla debido a que no usa exclusion mutua. Ahora agregemosla:
+
+```c
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		sem_wait(&mutex);    // Line P0 (NEW LINE)
+		sem_wait(&empty);    // Line P1
+		put(i);              // Line P2
+		sem_post(&full);     // Line P3
+		sem_post(&mutex);    // Line P4 (NEW LINE)
+	}
+}
+
+void *consumer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		sem_wait(&mutex);    // Line C0 (NEW LINE)
+		sem_wait(&full);     // Line C1
+		int tmp = get();     // Line C2
+		sem_post(&empty);    // Line C3
+		sem_post(&mutex);    // Line C4 (NEW LINE)
+		printf("%d\n", tmp);
+	}
+}
+```
+
+Agregar locks alrededor de las funciones **put()** y **get()** parece que soluciona el problema pero no lo hace porque ahora sufrimos de otro: **Deadlock**.
+
+#### Evitar el deadlock
+Supongamos que tenemos dos threads siendo un productor y un consumidor respectivamente. El consumidor corre primero, adquiere el lock (C0) y llama a **sem_wait()** en el semaforo full (C1). Como no hay ninguna informacion ahi provoca que el consumidor se bloquee y haga yield al CPU sin haber liberado el lock.
+
+Luego el productor corre y llama a **sem_wait()** (P0) pero como el lock esta ocupado el productor se queda esperando a que se libere infinitamente.
+
+### Solucion final
+Para solucionar este problema definitivamente debemos reducir el area de efecto del lock porque es muy grande:
+
+```c
+void *producer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		sem_wait(&empty);    // Line P1
+		sem_wait(&mutex);    // Line P1.5 (lock)
+		put(i);              // Line P2
+		sem_post(&mutex);    // Line P2.5 (unlock)
+		sem_post(&full);     // Line P3
+	}
+ }
+
+void *consumer(void *arg) {
+	int i;
+	for (i = 0; i < loops; i++) {
+		sem_wait(&full);        // Line C1
+		sem_wait(&mutex);       // Line C1.5 (lock)
+		int tmp = get();        // Line C2
+		sem_post(&mutex);       // Line C2.5 (unlock)
+		sem_post(&empty);       // Line C3
+		printf("%d\n", tmp);
+	}
+}
+```
+
+Movemos el mutex para adquirir y liberar el lock unicamente alrededor de la zona verdaderamente critica dejando afuera a los wait y post tanto de full como de empty.
+
+### Reader-Writer locks
+Este es un tipo especial de locks. Se basa en el problema de que queremos tener varios lectores de un thread pero solo uno puede modificar esa informacion:
+
+```c
+typedef struct _rwlock_t {
+    sem_t lock;        // binary semaphore (basic lock)
+    sem_t writelock;   // allow ONE writer/MANY readers
+    int readers;       // number of readers in critical section
+} rwlock_t;
+
+void rwlock_init(rwlock_t *rw) {
+    rw->readers = 0;
+    sem_init(&rw->lock, 0, 1);
+    sem_init(&rw->writelock, 0, 1);
+}
+
+void rwlock_acquire_readlock(rwlock_t *rw) {
+    sem_wait(&rw->lock);
+    rw->readers++;
+    if (rw->readers == 1)  // first reader gets writelock
+        sem_wait(&rw->writelock);
+    sem_post(&rw->lock);
+}
+
+void rwlock_release_readlock(rwlock_t *rw) {
+    sem_wait(&rw->lock);
+    rw->readers--;
+    if (rw->readers == 0)  // last reader releases writelock
+        sem_post(&rw->writelock);
+    sem_post(&rw->lock);
+}
+
+void rwlock_acquire_writelock(rwlock_t *rw) {
+    sem_wait(&rw->writelock);
+}
+
+void rwlock_release_writelock(rwlock_t *rw) {
+    sem_post(&rw->writelock);
+}
+```
+
+Entonces solo un reader podra acceder al lock y ser writer, ese sera el que llegue primero mientras que los demas deberan esperar su turno.
+
+Si un thread quiere actualizar la informacion debe llamar al nuevo par de sincronizacion:
+
+- **rwlock_acquire_writelock()**: para adquirir el lock
+- **rwlock_release_writelock()**: para liberar el lock
+
+Estas operaciones usan el semaforo **writelock** para asegurarse de que solo un writer pueda adquirir el lock. Pero el sistema para adquirir el lock ahora es un poco mas complejo.
+
+#### Adquirir el lock
+Tambien debemos destacar el comportamiento de las rutinas para adquirir el lock. Cuando adquirimos un **read lock**, el **reader** primero adquiere el lock e incrementa la variable *readers* que trackea cuantos readers hay en el momento dentro. Algo importante a resaltar es que cuando el primer **reader** adquiere el lock tambien se convierte en **writer** adquiriedo su lock por medio de **sem_wait()** y la libera por medio de **sem_post()**.
+
+De esta forma una vez que un **reader** adquiere el lock mas **readers** podran adquirirlo tambien pero cualquier thread que quiere adquirir el lock de **write** debera esperar hasta que todos los **readers** que llegaron antes lo hagan.
+
+Notemos que esta implementacion tiene algunas cosas negativas ya que no es justa porque no asegura que todos los readers lleguen a adquirir el lock de write en algun momento y tampoco evita el starvation el cual es bastante facil de producir.
+
+### The dining philosophers problem
+Es un famoso problema de concurrencia el cual no tiene utilidad real pero es interesante y bastante conocido.
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/dining_philosophers.png)
+
+Hay 5 filosofos que se sientan en una mesa. Entre ellos hay un solo cubierto haciendo en total 5 cubiertos. Los filosofos pueden hacer dos cosas:
+
+- Filosofar: para ello no necesitan nada
+- Comer: para ello necesitan dos cubiertos, el de su izquierda y derecha (no pueden ser otros)
+
+El loop basico seria el siguiente:
+
+```c
+while (1) {
+	think();
+	get_forks(p);
+	eat();
+	put_forks(p);
+}
+```
+
+El objetivo es poder escribir las rutinas get_forks() y put_forks() evitando el deadlock y evitando que los filosofos sufran de starvation. 
+
+Cuando un filosofo p trata de obtener el cubierto de su izquierda llama a left(p) y si quiere el de la derecha right(p).
+
+Necesitamos algunos semaforos para resolver este problema, uno por cada cubierto por lo que: `sem_t forks[5]`
+
+#### Solucion rota
+Inicializamos cada semaforo en 1. Asumimos que cada filosofo sabe su numero (ubicacion). De esta forma podemos escribir las rutinas get_forks() y put_forks():
+
+```c
+void get_forks(int p) {
+	sem_wait(&forks[left(p)]);
+	sem_wait(&forks[right(p)]);
+}
+
+void put_forks(int p) {
+	sem_post(&forks[left(p)]);
+	sem_post(&forks[right(p)]);
+}
+```
+
+Para adquirir un cubierto tenemos que adquirir un lock en cada lado, primero en la izquierda y despues en la derecha y cuando el filosofo termine de comer libera los locks.
+
+Pero esto no funciona porque tenemos problemas de **deadlock**. Si cada filosofo trata de comer al mismo tiempo todos trataran de agarrar el cubierto a su izquierda de manera tal que todos podran hacerlo pero cuando traten de agarrar el cubierto de su derecha ninguno podra ya que todos los cubiertos estan ocupados y se quedaron esperando a que se liberen eternamente.
+
+#### Solucion: romper la dependencia
+La solucion mas simple para solucionar este problema es cambiar como se toman los cubiertos o al menos cambiar como lo hace el ultimo filosofo.
+
+Supongamos que el utlimo filosofo (en este caso el 4) toma los cubiertos en otro orden, solamente los toma en otro orden, el put_forks() permanece igual:
+
+```c
+void get_forks(int p) {
+	if (p == 4) {
+		sem_wait(&forks[right(p)]);
+		sem_wait(&forks[left(p)]);
+	} else {
+		sem_wait(&forks[left(p)]);
+		sem_wait(&forks[right(p)]);
+	}
+}
+```
+
+Como el ultimo filosofo trata de adquirir primero el cubierto a su derecha y luego el de su izquierda no se produce la situacion de antes en la que se quedan esperando ya que ahora el filosofo que esta a su izquierda podra obtener ambos cubiertos, comer, liberarlos y dejar que el de su izquierda haga lo mismo y asi hasta que llegue el turno del ultimo filosofo (el 4).
+
+##### Otros famosos problemas
+Hay otros problemas famosos de concurrencia como **cigarette smoker's problem** o **sleeping barber problem**.
