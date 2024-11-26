@@ -392,6 +392,8 @@ void Pthread_mutex_lock(pthread_mutex_t *mutex) {
 ```
 
 ### Condition variables
+Las podemos pensar como esperas hasta que se cumplan una condicion.
+
 El otro componente mayor de la libreria threads son las ***condition variables*** las cuales son utiles cuando queremos señalizar algo entre threads, por ejemplo si un thread esta esperando que otro haga algo antes de continuar. Las dos rutinas para esto son:
 
 ```c
@@ -905,6 +907,8 @@ unlock(): lock=0;
 
 ## ***CONDITION VARIABLES***
 Es otra de las primitivas para la sincronizacion, hasta ahora solo vimos locks.
+
+Las podemos pensar como esperas hasta que se cumplan una condicion.
 ## Problema de la region critica
 Supongamos que tenemos lo siguiente:
 
@@ -1219,6 +1223,8 @@ Un productor solo puede dormir si todos los buffers estan llenos (p2). De igual 
 ## ***SEMAFOROS***
 Esta es la ultima primitiva que veremos para solucionar el problema de la sincronizacion.
 
+Los podemos pensar como si contaramos elementos.
+
 ### Definicion
 Un semaforo es un objeto con valor de **int** que podemos manipular con dos rutinas:
 
@@ -1388,6 +1394,7 @@ int main(int argc, char *argv[]) {
 
 Veamos que hace el codigo. Primero el productor espera a que el buffer este vacio para poner informacion dentro, de manera similar el consumidor espera a que el buffer este lleno antes de usarlo.
 
+El productor consume recursos vacios y produce recursos llenos. El consumidor espera a que haya recursos llenos y genera recursos vacios.
 ##### Situacion
 Imaginemos que tenemos solo dos threads, uno productor y otro consumidor. Ademas imaginemos que MAX=1 y que solo tenemos un CPU.
 
@@ -1473,6 +1480,23 @@ void *consumer(void *arg) {
 Movemos el mutex para adquirir y liberar el lock unicamente alrededor de la zona verdaderamente critica dejando afuera a los wait y post tanto de full como de empty.
 
 ### Reader-Writer locks
+Veamos muuy simplificadamente reader-writer:
+
+```c
+				{ r=0 & w=0}
+R:                        W:
+    while(1) {                while(1){
+        ????                      ????
+        r = r+1;                  w = w+1;
+        READ                      WRITE
+        ????                      ????
+        r = r-1;                  w = w-1;
+    }                         } 
+
+		{ INV: 0<=r & 0<=w<=1 & w=1 -> r=0} =
+		{ INV: w<=1 & w=1 -> r=0}
+```
+
 Este es un tipo especial de locks. Se basa en el problema de que queremos tener varios lectores de un thread pero solo uno puede modificar esa informacion:
 
 ```c
@@ -1596,3 +1620,238 @@ Como el ultimo filosofo trata de adquirir primero el cubierto a su derecha y lue
 
 ##### Otros famosos problemas
 Hay otros problemas famosos de concurrencia como **cigarette smoker's problem** o **sleeping barber problem**.
+
+## ***Bugs - Problemas comunes de la concurrencia***
+Para este topico vamos a basarnos en un estudio que analizo cuatro importantes programas open source:
+
+- MySQL
+- Mozilla
+- Apache
+- Open Office
+
+En el estudio se examinan los bugs de concurrencia que fueron encontrados y arreglados, en total fueron 105:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/bugs_summary.png)
+
+Vemos que 31 fueron deadlocks y 74 no lo fueron.
+
+### No deadlocks bugs
+Si dejamos de lado los bugs de deadlock vemos que dentro de la concurrencia hay otros tipos de bugs, entre ellos resaltan estos dos: **atomicy violation** y **order violation**
+
+#### Atomicy violation bugs
+Los podemos entender como si **la serializacion deseada entre multiples accesos a memoria es violada**.
+
+Veamos un ejemplo:
+
+```c
+Thread 1::
+if (thd->proc_info) {
+	fputs(thd->proc_info, ...);
+}
+
+Thread 2::
+thd->proc_info = NULL;
+```
+
+En este ejemplo dos threads distintos tratan de acceder al campo *proc_info* en la estructura *thd*. El primer thread verifica si el valor es no nulo y lo imprime, el segundo thread setea ese valor a NULL.
+
+Si el primer thread hace el chequeo pero es interrumpido antes de llamar a *fputs* y el segundo thread corre provocaria un puntero a NULL que cuando se resuma la ejecucion del thread 1 crashea.
+
+Esto se puede solucionar agregando locks alrededor de las variables compartidas asegurandonos de que cada thread acceda  a *proc_info* solo cuando haya adquirido el lock (*proc_info_lock*):
+
+```c
+pthread_mutex_t proc_info_lock = PTHREAD_MUTEX_INITIALIZER;
+
+Thread 1::
+pthread_mutex_lock(&proc_info_lock);
+if (thd->proc_info) {
+	fputs(thd->proc_info, ...);
+}
+pthread_mutex_unlock(&proc_info_lock);
+
+Thread 2::
+pthread_mutex_lock(&proc_info_lock);
+thd->proc_info = NULL;
+pthread_mutex_unlock(&proc_info_lock);
+```
+
+### Order violation bugs
+Es otro tipo de bug comun de concurrencia, lo podemos entender como si **el orden deseado entre dos grupos de acceso a memoria fuese intercambiado**.
+
+Veamos un ejemplo:
+
+```c
+Thread 1::
+void init() {
+	mThread = PR_CreateThread(mMain, ...);
+}
+
+Thread 2::
+void mMain(...) {
+	mState = mThread->State;
+}
+```
+
+El codigo en thread2 asume que la variable *mThread* ya fue inicializada y es distinta a NULL. Pero si thread2 corre inmediatamente luego de ser creado el valor de *mThread* todavia no habra sido seteado cuando accedamos a ella por medio de *mMain()* produciendo un crash por un **NULL-pointer deference**. Notemos que asumimos que el valor de *mThread* es inicialmente NULL, caso contrario pasarian cosas raras.
+
+Para solucionar este bug se puede utilizar **condition variables**:
+
+```c
+pthread_mutex_t mtLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t mtCond = PTHREAD_COND_INITIALIZER;
+int mtInit = 0;
+
+Thread 1::
+void init() {
+	...
+	mThread = PR_CreateThread(mMain, ...);
+	
+	// signal that the thread has been created...
+	pthread_mutex_lock(&mtLock);
+	mtInit = 1;
+	pthread_cond_signal(&mtCond);
+	pthread_mutex_unlock(&mtLock);
+	...
+}
+
+Thread 2::
+void mMain(...) {
+	...
+	// wait for the thread to be initialized...
+	pthread_mutex_lock(&mtLock);
+	while (mtInit == 0)
+		pthread_cond_wait(&mtCond, &mtLock);
+	pthread_mutex_unlock(&mtLock);
+
+	mState = mThread->State;
+	...
+}
+```
+
+Agregamos la condition variable (mtCond) y el lock correspondiente (mtLock) ademas de la variable de estado (mInit).
+
+Cuando el codigo de inicializacion corre setea el estado de mtInit a 1 y señala que lo hizo. Si el thread2 corrio antes va a estar esperando por la señal y el cambio de estado, si todaviia no corrio va a chequear el estado y vera que la inicializacion ya ocurrio y continuar de manera normal.
+
+### Deadlock bugs
+Los deadlocks ocurren por ejemplo cuando un thread1 adquirio el lock L1 y esta esperando por el lock L2 pero el thread2 adquirio el lock L2 y esta esperando por el lock L1. Ninguno realiza una avance, estan esperando un cambio de estado que nunca sucedera:
+
+```c
+Thread 1:                        Thread 2:
+pthread_mutex_lock(L1);          pthread_mutex_lock(L2);
+pthread_mutex_lock(L2);          pthread_mutex_lock(L1);
+```
+
+Notemos que con este codigo no necesariamente ocurre un deadlock pero podria suceder. 
+
+La situacion seria la siguiente:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/deadlock_graphic.png)
+
+### ¿Por que suceden los deadlocks?
+En codigos largos con muchas dependencias es comun que haya deadlocks, por lo que las estrategias de diseño deben ser hechas cuidadosamente.
+
+Otra razon es por la naturalidad del **encapsulation**, o sea cuando tratamos de esconder detalles de la implementacion para hacer mas sencillo hacer el software de manera modular. Pero la modularidad no se lleva bien con los deadlocks.
+
+### Condiciones del deadlock
+Se necesitan 4 condiciones para un deadlock, si alguna de estas no ocurre entonces no hay un deadlock:
+
+- **Mutual exclusion**: los threads adquieren control exclusivo de los recursos que adquieren
+- **Hold-And-Wait**: threads adquieren los recursos guardados en ellos mientras esperan por recursos adicionales
+- **No preemption**: Los recursos no pueden ser forzadamente removidos de los threads que los adquieren
+- **Circular wait**: existe una cadena circular de threads que quieren adquirir uno o mas recursos que tambien los quiere el siguiente thread en la cadena
+
+### Prevencion de las condiciones de deadlock
+#### Circular wait
+La mejor manera de evitarlo es escribiendo el codigo de manera tal para que nunca suceda para obtener asi un **total ordering** en la adquisicion del lock, o sea que siempre adquiramos L1 antes de L2 por ejemplo.
+
+En caso de haya mas de dos threads se puede hacer uso de un **partial ordering** y despues utilizar esa base para ir escalando.
+
+
+#### Hold-and-wait
+Puede ser evitado adquiriendo todos los locks a la vez de manera atomica:
+
+```c
+pthread_mutex_lock(prevention);
+ // begin acquisition
+pthread_mutex_lock(L1);
+pthread_mutex_lock(L2);
+...
+pthread_mutex_unlock(prevention); // end
+```
+
+Al adquirir el lock *prevention* el codigo garantiza que haya context switch en mitad de adquisicion de un lock evitando asi el deadlock.
+
+#### No preemption
+Generalmente vemos los locks como ocupados hasta que son llamados, por lo que al hacer multiples adquisiciones de locks solemos tener problemas porque cuando esperamos por un lock estamos ocupando otro a su vez. Algunas librerias tienen algunas rutinas que nos pueden ayudar con esto, como por el ejemplo la rutina *pthread_mutex_trylock()* la cual adquiere el lock (si esta disponible) y retorna success en caso de exito o error en caso de que el lock este ya adquirido permitiendonos intentar adquirirlo mas tarde.
+
+```c
+top:
+	pthread_mutex_lock(L1);
+	if (pthread_mutex_trylock(L2) != 0) {
+		pthread_mutex_unlock(L1);
+		goto top;
+	}
+```
+
+Pero notemos que esto trae consigo un problema: el **livelock**. Por ejemplo puede darse el caso en que dos threads intente hacer la secuencia de codigo anterior repetidamente y fallar al adquirir los dos lock. Por lo que tendriamos a ambos threds corriendo la secuencia de codigo infinitamente pero sin hacer un progreso verdadero (entendiendo verdadero como lo que queremos que hagan), como corre codigo pero no hace un progreso es que se llama livelock y no deadlock.
+
+Hay soluciones para el livelock, por ejemplo podriamso agregar un delay random antes de volver al loop e intentar otra vez.
+
+#### Mutual exclusion
+Evitar el necesitar exclusion mutua es dificil pero posible. Una idea es diseñar varias estructuras de datos sin locks, o sea **locks free** usando isntrucciones de hardware mas poderosas para evitar asi el usar locks.
+
+Supongamos que tenemos una instruccion *compare-and-swap*:
+
+```c
+int CompareAndSwap(int *address, int expected, int new) {
+	if (*address == expected) {
+		*address = new;
+		return 1; // success
+	}
+	return 0; // failure
+}
+```
+
+Imaginemos ahora que queremos incrementar el valor una cierta cantidad de manera atomica usando compare-and-swap, podriamos hacer lo siguiente:
+
+```c
+void AtomicIncrement(int *value, int amount) {
+	do {
+		int old = *value;
+	} while (CompareAndSwap(value, old, old + amount) == 0);
+}
+```
+
+En lugar de adquirir el lock, hacer la actualizacion y luego liberarlo, en su lugar podemos construir una implementacion que repetidamente trate de actualizar el valor en el nuevo lugar usando compare-and-swap para ello. Pero todavia el livelock es posible.
+
+### Evitar el deadlock via scheduling
+En lugar de prevenir el deadlock, en algunos escenarios es mejor evitarlo. Evitarlo requiere cierto conocimiento sobre que locks los threads podrian adquirir durante su ejecucion para poder planificarlos de manera tal que se garantice que el deadlock no ocurra.
+
+Por ejemplo supongamos que tenemos 2 procesadores y 4 threads, thread1 adquiere los locks L1 y L2 (en algun orden), thread2 adquiere los locks L1 y L2 tambien, thread3 adquiere solo L2 y thread4 no adquiere ningun lock. Entonces tendriamos lo siguiente:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/locks_adquisition_1.png)
+
+Su planificacion seria la siguiente:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/locks_schedule_1.png)
+
+Notemos que esta todo bien, nunca podria causar un deadlock porque solo agarra los locks de a uno.
+
+Veamos otro ejemplo, supongamos que ahora tenemos la siguiente situacion:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/locks_adquisition_2.png)
+
+Y tenemos esta posible planificacion:
+
+![ScreenShot](Imagenes/Teorico_Concurrencia/locks_schedule_2.png)
+
+Vemos que T1, T2 y T3 corren en el mismo procesador por lo que el wall tiem sera alto. A pesar de que es posible correr estas tareas concurrentemente, el miedo del deadlock hace que prefiramos no hacerlo perdiendo performance pero asegurandonos que no haya deadlocks.
+
+### Deadlock detectors and recovers
+Nuestra ultima estrategia es simplemente dejar que algunos deadlocks sucedan y tomar accion cuando lo detectemos.
+
+Por ejemplo suopongamos que tenemos un SO que se bloquea una vez al año, entonces simplemente podriamos reiniciar la maquina una vez por año.
+
+Si los deadlocks son raros a veces es posible dejarlos sin solucion.
+
+Algunas bases de datos emplean un detector de deadlocks y tecnicas de recuperacion. Este detector corre periodicamente chequeando que no haya deadlocks.
