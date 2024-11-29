@@ -32,6 +32,9 @@ Condición de carrera, es una lucha entre los hilos para ver quien agarra primer
 ### No deterministico
 No determinismo es cuando puede dar cualquier valor, por ejemplo 1 o 2 y no se la probabilidad de dicha cosa. Ausencia total del valor final que va tomar el programa
 
+### Dynamic Voltage And Frequency Scaling (DVFS)
+Regula el voltaje del procesador para cambiar su velocidad para que no se queme
+
 ## ***Threads o hilos***
 Ahora vamos a introducir una nueva abstracción llamada ***threads o hilos***.
 
@@ -1755,10 +1758,10 @@ Otra razon es por la naturalidad del **encapsulation**, o sea cuando tratamos de
 ### Condiciones del deadlock
 Se necesitan 4 condiciones para un deadlock, si alguna de estas no ocurre entonces no hay un deadlock:
 
-- **Mutual exclusion**: los threads adquieren control exclusivo de los recursos que adquieren
-- **Hold-And-Wait**: threads adquieren los recursos guardados en ellos mientras esperan por recursos adicionales
-- **No preemption**: Los recursos no pueden ser forzadamente removidos de los threads que los adquieren
-- **Circular wait**: existe una cadena circular de threads que quieren adquirir uno o mas recursos que tambien los quiere el siguiente thread en la cadena
+- **Mutual exclusion**: los threads adquieren control exclusivo de los recursos que adquieren -> no puedo darle un recurso a dos procesos a la vez
+- **Hold-And-Wait**: threads adquieren los recursos guardados en ellos mientras esperan por recursos adicionales -> un proceso a un hilo debe tener un recurso y estar esperando por otro
+- **No preemption**: Los recursos no pueden ser forzadamente removidos de los threads que los adquieren -> no hay apropiacion, una vez que alguien adquiere un recurso no se lo pueden quitar
+- **Circular wait**: existe una cadena circular de threads que quieren adquirir uno o mas recursos que tambien los quiere el siguiente thread en la cadena -> todos hacen las cosas en cierto orden, por ejemplo los filosofos que leventan el cubierto izquierdo
 
 ### Prevencion de las condiciones de deadlock
 #### Circular wait
