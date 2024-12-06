@@ -55,7 +55,7 @@ A los roks duplican su cantidad con cada iteracion y a eso le tengo sumar el nro
 
 Ahora si generalizamos para n fork tendrimos lo siguiente:
 
-`f(n) = (2^n)-1` donde consideramos como n los prints
+`f(n) = Sumatoria (2^n)-1` donde consideramos como n los prints
 
 ![ScreenShot](Imagenes_practico_cpu/ej06_cpu.png)
 
@@ -88,7 +88,7 @@ Supongamos que quitamos una de las flechas:
 - **I/O: done**: Los procesos que requieren de Input o Output no se ejecutarian nunca o tendrian que pasar directamente a running
 - **I/O: initiate**: Cuando un proceso necesite de un I/O no se cambia a blocked, sino que se queda en running esperando hasta que reciba lo que esperaba.
 - **Scheduled**: Los procesos nunca pasarian de ready a running, basicamente el ready desaparece y solo tendriamos blocked y running
-- **Descheduled**: Los procesos nunca pasarian a running por lo que nada andaria
+- **Descheduled**: Los procesos nunca volverian del running por context switch, necesitaria volver por I/O.
 
 ![ScreenShot](Imagenes_practico_cpu/ej11_cpu.png)
 
